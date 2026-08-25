@@ -5,15 +5,15 @@ working in this repository.
 
 ## About This Project
 
-`shelf-data.go` is the database access layer for the Shelf microservice: repository functions
+`game-room-data.go` is the database access layer for the Game Room microservice: repository functions
 for library, wishlist, and table, plus visibility resolution, translating between
-`shelf-objects.go` persistence models and their API value objects.
+`game-room-objects.go` persistence models and their API value objects.
 
 ## Dependencies
 
-Depends on `api-core.go` (query param parsing/tracing), `shelf-objects.go` (models/VOs),
+Depends on `api-core.go` (query param parsing/tracing), `game-room-objects.go` (models/VOs),
 `common.go` (logging), `model-core.go` (Property/Tag conversion), and `mongodb.go` (database
-access). Depended on by `shelf-api`.
+access). Depended on by `game-room-api`.
 
 ## Committing Code
 

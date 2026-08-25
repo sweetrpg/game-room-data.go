@@ -1,6 +1,6 @@
 package data
 
-import "github.com/sweetrpg/shelf-objects.go/models"
+import "github.com/sweetrpg/game-room-objects.go/models"
 
 // CanView reports whether a viewer may see content at the given effective visibility level.
 // Friendship isn't implemented yet, so callers always pass isFriend/isFriendOfFriend as false -

@@ -3,7 +3,7 @@ package data
 import (
 	"testing"
 
-	"github.com/sweetrpg/shelf-objects.go/models"
+	"github.com/sweetrpg/game-room-objects.go/models"
 )
 
 func TestCanView(t *testing.T) {

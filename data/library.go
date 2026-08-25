@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/sweetrpg/common.go/logging"
+	"github.com/sweetrpg/game-room-objects.go/models"
+	"github.com/sweetrpg/game-room-objects.go/vo"
 	"github.com/sweetrpg/mongodb.go/database"
-	"github.com/sweetrpg/shelf-objects.go/models"
-	"github.com/sweetrpg/shelf-objects.go/vo"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
