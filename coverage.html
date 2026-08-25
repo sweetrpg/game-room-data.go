@@ -1,0 +1,589 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>data: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/sweetrpg/game-room-data.go/data/library.go (0.0%)</option>
+				
+				<option value="file1">github.com/sweetrpg/game-room-data.go/data/table.go (0.0%)</option>
+				
+				<option value="file2">github.com/sweetrpg/game-room-data.go/data/visibility.go (100.0%)</option>
+				
+				<option value="file3">github.com/sweetrpg/game-room-data.go/data/wishlist.go (0.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package data
+
+import (
+        "context"
+        "time"
+
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/game-room-objects.go/models"
+        "github.com/sweetrpg/game-room-objects.go/vo"
+        "github.com/sweetrpg/mongodb.go/database"
+        "go.mongodb.org/mongo-driver/bson"
+        "go.mongodb.org/mongo-driver/bson/primitive"
+)
+
+// GetLibraryByUser returns the given user's library, or nil if they don't have one yet.
+func GetLibraryByUser(c context.Context, userID string) (*models.Library, error) <span class="cov0" title="0">{
+        results, err := database.Query[models.Library](libraryCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 1)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for library", "userID", userID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
+                return nil, nil
+        }</span>
+        <span class="cov0" title="0">return results[0], nil</span>
+}
+
+// getOrCreateLibrary returns the user's library, creating one (defaulting to private) if none
+// exists yet, per the "new library defaults to private" requirement.
+func getOrCreateLibrary(c context.Context, userID string) (*models.Library, error) <span class="cov0" title="0">{
+        lib, err := GetLibraryByUser(c, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">if lib != nil </span><span class="cov0" title="0">{
+                return lib, nil
+        }</span>
+
+        <span class="cov0" title="0">newLib := models.NewLibrary(primitive.NewObjectID().Hex(), userID)
+        newLib.CreatedAt = time.Now()
+        newLib.CreatedBy = userID
+        if _, err := database.Insert(libraryCollection, newLib); err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while inserting library", "userID", userID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return &amp;newLib, nil</span>
+}
+
+func replaceLibrary(c context.Context, lib *models.Library) error <span class="cov0" title="0">{
+        lib.UpdatedAt = time.Now()
+        _, err := database.Db.Collection(libraryCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: lib.ID}}, lib)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while replacing library", "id", lib.ID, "error", err)
+        }</span>
+        <span class="cov0" title="0">return err</span>
+}
+
+// AddLibraryEntry links a catalog volume into the user's library, creating the library if it
+// doesn't exist yet. A no-op if the volume is already present.
+func AddLibraryEntry(c context.Context, userID, volumeID string) (*models.Library, error) <span class="cov0" title="0">{
+        lib, err := getOrCreateLibrary(c, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">for _, e := range lib.Entries </span><span class="cov0" title="0">{
+                if e.VolumeID == volumeID </span><span class="cov0" title="0">{
+                        return lib, nil
+                }</span>
+        }
+        <span class="cov0" title="0">lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID})
+        if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return lib, nil</span>
+}
+
+// RemoveLibraryEntry unlinks a catalog volume from the user's library.
+func RemoveLibraryEntry(c context.Context, userID, volumeID string) (*models.Library, error) <span class="cov0" title="0">{
+        lib, err := GetLibraryByUser(c, userID)
+        if err != nil || lib == nil </span><span class="cov0" title="0">{
+                return lib, err
+        }</span>
+        <span class="cov0" title="0">kept := lib.Entries[:0]
+        for _, e := range lib.Entries </span><span class="cov0" title="0">{
+                if e.VolumeID != volumeID </span><span class="cov0" title="0">{
+                        kept = append(kept, e)
+                }</span>
+        }
+        <span class="cov0" title="0">lib.Entries = kept
+        if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return lib, nil</span>
+}
+
+// SetLibraryDefaultVisibility updates the library's default visibility, creating the library
+// (private default) first if the user doesn't have one yet.
+func SetLibraryDefaultVisibility(c context.Context, userID string, newDefault models.Visibility) (*models.Library, error) <span class="cov0" title="0">{
+        lib, err := getOrCreateLibrary(c, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">lib.DefaultVisibility = newDefault
+        if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return lib, nil</span>
+}
+
+// SetLibraryEntryVisibilityOverride sets or clears (override == nil) one entry's per-entry
+// visibility override.
+func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID string, override *models.Visibility) (*models.Library, error) <span class="cov0" title="0">{
+        lib, err := GetLibraryByUser(c, userID)
+        if err != nil || lib == nil </span><span class="cov0" title="0">{
+                return lib, err
+        }</span>
+        <span class="cov0" title="0">for i, e := range lib.Entries </span><span class="cov0" title="0">{
+                if e.VolumeID == volumeID </span><span class="cov0" title="0">{
+                        lib.Entries[i].VisibilityOverride = override
+                        break</span>
+                }
+        }
+        <span class="cov0" title="0">if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return lib, nil</span>
+}
+
+// LibraryToVO converts a library model, filtered to what viewerID may see, into its VO. ownerID
+// is the library's own user ID; isFriend/isFriendOfFriend describe the viewer's relationship to
+// the owner (always false today - see CanView).
+func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFriend bool) *vo.LibraryVO <span class="cov0" title="0">{
+        entries := make([]vo.LibraryEntryVO, 0, len(lib.Entries))
+        for _, e := range lib.Entries </span><span class="cov0" title="0">{
+                effective := e.EffectiveVisibility(lib.DefaultVisibility)
+                if !CanView(effective, lib.UserID, viewerID, isFriend, isFriendOfFriend) </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+                <span class="cov0" title="0">var override *string
+                if e.VisibilityOverride != nil </span><span class="cov0" title="0">{
+                        s := string(*e.VisibilityOverride)
+                        override = &amp;s
+                }</span>
+                <span class="cov0" title="0">entries = append(entries, vo.LibraryEntryVO{VolumeID: e.VolumeID, VisibilityOverride: override})</span>
+        }
+
+        <span class="cov0" title="0">return &amp;vo.LibraryVO{
+                ID:                lib.ID,
+                UserID:            lib.UserID,
+                DefaultVisibility: string(lib.DefaultVisibility),
+                Entries:           entries,
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package data
+
+import (
+        "context"
+        "time"
+
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/game-room-objects.go/models"
+        "github.com/sweetrpg/game-room-objects.go/vo"
+        "github.com/sweetrpg/mongodb.go/database"
+        "go.mongodb.org/mongo-driver/bson"
+        "go.mongodb.org/mongo-driver/bson/primitive"
+)
+
+// GetTable returns one table by ID, or nil if it doesn't exist.
+func GetTable(c context.Context, id string) (*models.Table, error) <span class="cov0" title="0">{
+        results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for table", "id", id, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
+                return nil, nil
+        }</span>
+        <span class="cov0" title="0">return results[0], nil</span>
+}
+
+// ListTablesByUser returns every table owned by the given user.
+func ListTablesByUser(c context.Context, userID string) ([]*models.Table, error) <span class="cov0" title="0">{
+        results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for tables", "userID", userID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return results, nil</span>
+}
+
+// CreateTable creates a new table, defaulting to private visibility per the "new tables default
+// to private" requirement.
+func CreateTable(c context.Context, userID, name string) (*models.Table, error) <span class="cov0" title="0">{
+        tbl := models.NewTable(primitive.NewObjectID().Hex(), userID, name)
+        tbl.CreatedAt = time.Now()
+        tbl.CreatedBy = userID
+        if _, err := database.Insert(tableCollection, tbl); err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while inserting table", "userID", userID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return &amp;tbl, nil</span>
+}
+
+func replaceTable(c context.Context, tbl *models.Table) error <span class="cov0" title="0">{
+        tbl.UpdatedAt = time.Now()
+        _, err := database.Db.Collection(tableCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: tbl.ID}}, tbl)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while replacing table", "id", tbl.ID, "error", err)
+        }</span>
+        <span class="cov0" title="0">return err</span>
+}
+
+// UpdateTableName renames a table.
+func UpdateTableName(c context.Context, id, name string) (*models.Table, error) <span class="cov0" title="0">{
+        tbl, err := GetTable(c, id)
+        if err != nil || tbl == nil </span><span class="cov0" title="0">{
+                return tbl, err
+        }</span>
+        <span class="cov0" title="0">tbl.Name = name
+        if err := replaceTable(c, tbl); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return tbl, nil</span>
+}
+
+// SetTableVisibility updates a table's visibility.
+func SetTableVisibility(c context.Context, id string, visibility models.Visibility) (*models.Table, error) <span class="cov0" title="0">{
+        tbl, err := GetTable(c, id)
+        if err != nil || tbl == nil </span><span class="cov0" title="0">{
+                return tbl, err
+        }</span>
+        <span class="cov0" title="0">tbl.Visibility = visibility
+        if err := replaceTable(c, tbl); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return tbl, nil</span>
+}
+
+// AddTableVolume links a catalog volume into a table. A no-op if already present.
+func AddTableVolume(c context.Context, id, volumeID string) (*models.Table, error) <span class="cov0" title="0">{
+        tbl, err := GetTable(c, id)
+        if err != nil || tbl == nil </span><span class="cov0" title="0">{
+                return tbl, err
+        }</span>
+        <span class="cov0" title="0">for _, v := range tbl.VolumeIDs </span><span class="cov0" title="0">{
+                if v == volumeID </span><span class="cov0" title="0">{
+                        return tbl, nil
+                }</span>
+        }
+        <span class="cov0" title="0">tbl.VolumeIDs = append(tbl.VolumeIDs, volumeID)
+        if err := replaceTable(c, tbl); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return tbl, nil</span>
+}
+
+// RemoveTableVolume unlinks a catalog volume from a table.
+func RemoveTableVolume(c context.Context, id, volumeID string) (*models.Table, error) <span class="cov0" title="0">{
+        tbl, err := GetTable(c, id)
+        if err != nil || tbl == nil </span><span class="cov0" title="0">{
+                return tbl, err
+        }</span>
+        <span class="cov0" title="0">kept := tbl.VolumeIDs[:0]
+        for _, v := range tbl.VolumeIDs </span><span class="cov0" title="0">{
+                if v != volumeID </span><span class="cov0" title="0">{
+                        kept = append(kept, v)
+                }</span>
+        }
+        <span class="cov0" title="0">tbl.VolumeIDs = kept
+        if err := replaceTable(c, tbl); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return tbl, nil</span>
+}
+
+// DeleteTable removes a table entirely.
+func DeleteTable(c context.Context, id string) error <span class="cov0" title="0">{
+        _, err := database.Db.Collection(tableCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}})
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while deleting table", "id", id, "error", err)
+        }</span>
+        <span class="cov0" title="0">return err</span>
+}
+
+// TableToVO converts a table model into its VO, or nil if viewerID may not see it at all.
+func TableToVO(tbl *models.Table, viewerID string, isFriend, isFriendOfFriend bool) *vo.TableVO <span class="cov0" title="0">{
+        if !CanView(tbl.Visibility, tbl.UserID, viewerID, isFriend, isFriendOfFriend) </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">return &amp;vo.TableVO{
+                ID:         tbl.ID,
+                UserID:     tbl.UserID,
+                Name:       tbl.Name,
+                VolumeIDs:  tbl.VolumeIDs,
+                Visibility: string(tbl.Visibility),
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package data
+
+import "github.com/sweetrpg/game-room-objects.go/models"
+
+// CanView reports whether a viewer may see content at the given effective visibility level.
+// Friendship isn't implemented yet, so callers always pass isFriend/isFriendOfFriend as false -
+// this is the single code path that will start returning real friend-scoped results once
+// friendship ships, per design.md.
+func CanView(vis models.Visibility, ownerID, viewerID string, isFriend, isFriendOfFriend bool) bool <span class="cov10" title="10">{
+        if viewerID != "" &amp;&amp; viewerID == ownerID </span><span class="cov1" title="1">{
+                return true
+        }</span>
+
+        <span class="cov9" title="9">switch vis </span>{
+        case models.VisibilityPublic:<span class="cov3" title="2">
+                return true</span>
+        case models.VisibilityFriendsOfFriends:<span class="cov5" title="3">
+                return isFriend || isFriendOfFriend</span>
+        case models.VisibilityFriends:<span class="cov3" title="2">
+                return isFriend</span>
+        default:<span class="cov3" title="2">
+                return false</span>
+        }
+}
+
+// PreviewLibraryDefaultChange returns the volume IDs of entries that would become more exposed
+// if the library's default visibility changed to newDefault. Entries with their own override are
+// never affected by a default change, so only unoverridden entries are considered.
+func PreviewLibraryDefaultChange(lib *models.Library, newDefault models.Visibility) []string <span class="cov3" title="2">{
+        affected := make([]string, 0)
+        for _, e := range lib.Entries </span><span class="cov6" title="4">{
+                if e.VisibilityOverride != nil </span><span class="cov3" title="2">{
+                        continue</span>
+                }
+                <span class="cov3" title="2">if newDefault.MoreExposedThan(lib.DefaultVisibility) </span><span class="cov1" title="1">{
+                        affected = append(affected, e.VolumeID)
+                }</span>
+        }
+        <span class="cov3" title="2">return affected</span>
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package data
+
+import (
+        "context"
+        "time"
+
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/game-room-objects.go/models"
+        "github.com/sweetrpg/game-room-objects.go/vo"
+        "github.com/sweetrpg/mongodb.go/database"
+        "go.mongodb.org/mongo-driver/bson"
+        "go.mongodb.org/mongo-driver/bson/primitive"
+)
+
+// GetWishlistByUser returns the given user's wishlist, or nil if they don't have one yet.
+func GetWishlistByUser(c context.Context, userID string) (*models.Wishlist, error) <span class="cov0" title="0">{
+        results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 1)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for wishlist", "userID", userID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
+                return nil, nil
+        }</span>
+        <span class="cov0" title="0">return results[0], nil</span>
+}
+
+// getOrCreateWishlist returns the user's wishlist, creating one (defaulting to private) if none
+// exists yet, per the "new wishlists default to private" requirement.
+func getOrCreateWishlist(c context.Context, userID string) (*models.Wishlist, error) <span class="cov0" title="0">{
+        wl, err := GetWishlistByUser(c, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">if wl != nil </span><span class="cov0" title="0">{
+                return wl, nil
+        }</span>
+
+        <span class="cov0" title="0">newWl := models.NewWishlist(primitive.NewObjectID().Hex(), userID)
+        newWl.CreatedAt = time.Now()
+        newWl.CreatedBy = userID
+        if _, err := database.Insert(wishlistCollection, newWl); err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while inserting wishlist", "userID", userID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return &amp;newWl, nil</span>
+}
+
+func replaceWishlist(c context.Context, wl *models.Wishlist) error <span class="cov0" title="0">{
+        wl.UpdatedAt = time.Now()
+        _, err := database.Db.Collection(wishlistCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: wl.ID}}, wl)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while replacing wishlist", "id", wl.ID, "error", err)
+        }</span>
+        <span class="cov0" title="0">return err</span>
+}
+
+// AddWishlistEntry links a catalog volume into the user's wishlist, creating the wishlist if it
+// doesn't exist yet. A no-op if the volume is already present.
+func AddWishlistEntry(c context.Context, userID, volumeID string) (*models.Wishlist, error) <span class="cov0" title="0">{
+        wl, err := getOrCreateWishlist(c, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">for _, e := range wl.Entries </span><span class="cov0" title="0">{
+                if e.VolumeID == volumeID </span><span class="cov0" title="0">{
+                        return wl, nil
+                }</span>
+        }
+        <span class="cov0" title="0">wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID})
+        if err := replaceWishlist(c, wl); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return wl, nil</span>
+}
+
+// RemoveWishlistEntry unlinks a catalog volume from the user's wishlist.
+func RemoveWishlistEntry(c context.Context, userID, volumeID string) (*models.Wishlist, error) <span class="cov0" title="0">{
+        wl, err := GetWishlistByUser(c, userID)
+        if err != nil || wl == nil </span><span class="cov0" title="0">{
+                return wl, err
+        }</span>
+        <span class="cov0" title="0">kept := wl.Entries[:0]
+        for _, e := range wl.Entries </span><span class="cov0" title="0">{
+                if e.VolumeID != volumeID </span><span class="cov0" title="0">{
+                        kept = append(kept, e)
+                }</span>
+        }
+        <span class="cov0" title="0">wl.Entries = kept
+        if err := replaceWishlist(c, wl); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return wl, nil</span>
+}
+
+// SetWishlistVisibility updates the wishlist's visibility, creating the wishlist (private
+// default) first if the user doesn't have one yet.
+func SetWishlistVisibility(c context.Context, userID string, visibility models.Visibility) (*models.Wishlist, error) <span class="cov0" title="0">{
+        wl, err := getOrCreateWishlist(c, userID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">wl.Visibility = visibility
+        if err := replaceWishlist(c, wl); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov0" title="0">return wl, nil</span>
+}
+
+// WishlistToVO converts a wishlist model into its VO, or nil if viewerID may not see it at all.
+func WishlistToVO(wl *models.Wishlist, viewerID string, isFriend, isFriendOfFriend bool) *vo.WishlistVO <span class="cov0" title="0">{
+        if !CanView(wl.Visibility, wl.UserID, viewerID, isFriend, isFriendOfFriend) </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">entries := make([]vo.WishlistEntryVO, 0, len(wl.Entries))
+        for _, e := range wl.Entries </span><span class="cov0" title="0">{
+                entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID})
+        }</span>
+
+        <span class="cov0" title="0">return &amp;vo.WishlistVO{
+                ID:         wl.ID,
+                UserID:     wl.UserID,
+                Visibility: string(wl.Visibility),
+                Entries:    entries,
+        }</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
