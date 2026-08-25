@@ -37,8 +37,8 @@ func getOrCreateLibrary(c context.Context, userID string) (*models.Library, erro
 	}
 
 	newLib := models.NewLibrary(primitive.NewObjectID().Hex(), userID)
-	newLib.Auditable.CreatedAt = time.Now()
-	newLib.Auditable.CreatedBy = userID
+	newLib.CreatedAt = time.Now()
+	newLib.CreatedBy = userID
 	if _, err := database.Insert(libraryCollection, newLib); err != nil {
 		logging.Logger.Error("Error while inserting library", "userID", userID, "error", err)
 		return nil, err
@@ -47,7 +47,7 @@ func getOrCreateLibrary(c context.Context, userID string) (*models.Library, erro
 }
 
 func replaceLibrary(c context.Context, lib *models.Library) error {
-	lib.Auditable.UpdatedAt = time.Now()
+	lib.UpdatedAt = time.Now()
 	_, err := database.Db.Collection(libraryCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: lib.ID}}, lib)
 	if err != nil {
 		logging.Logger.Error("Error while replacing library", "id", lib.ID, "error", err)

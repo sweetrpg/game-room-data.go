@@ -37,8 +37,8 @@ func getOrCreateWishlist(c context.Context, userID string) (*models.Wishlist, er
 	}
 
 	newWl := models.NewWishlist(primitive.NewObjectID().Hex(), userID)
-	newWl.Auditable.CreatedAt = time.Now()
-	newWl.Auditable.CreatedBy = userID
+	newWl.CreatedAt = time.Now()
+	newWl.CreatedBy = userID
 	if _, err := database.Insert(wishlistCollection, newWl); err != nil {
 		logging.Logger.Error("Error while inserting wishlist", "userID", userID, "error", err)
 		return nil, err
@@ -47,7 +47,7 @@ func getOrCreateWishlist(c context.Context, userID string) (*models.Wishlist, er
 }
 
 func replaceWishlist(c context.Context, wl *models.Wishlist) error {
-	wl.Auditable.UpdatedAt = time.Now()
+	wl.UpdatedAt = time.Now()
 	_, err := database.Db.Collection(wishlistCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: wl.ID}}, wl)
 	if err != nil {
 		logging.Logger.Error("Error while replacing wishlist", "id", wl.ID, "error", err)

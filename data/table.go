@@ -39,8 +39,8 @@ func ListTablesByUser(c context.Context, userID string) ([]*models.Table, error)
 // to private" requirement.
 func CreateTable(c context.Context, userID, name string) (*models.Table, error) {
 	tbl := models.NewTable(primitive.NewObjectID().Hex(), userID, name)
-	tbl.Auditable.CreatedAt = time.Now()
-	tbl.Auditable.CreatedBy = userID
+	tbl.CreatedAt = time.Now()
+	tbl.CreatedBy = userID
 	if _, err := database.Insert(tableCollection, tbl); err != nil {
 		logging.Logger.Error("Error while inserting table", "userID", userID, "error", err)
 		return nil, err
@@ -49,7 +49,7 @@ func CreateTable(c context.Context, userID, name string) (*models.Table, error) 
 }
 
 func replaceTable(c context.Context, tbl *models.Table) error {
-	tbl.Auditable.UpdatedAt = time.Now()
+	tbl.UpdatedAt = time.Now()
 	_, err := database.Db.Collection(tableCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: tbl.ID}}, tbl)
 	if err != nil {
 		logging.Logger.Error("Error while replacing table", "id", tbl.ID, "error", err)
