@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    uses: sweetrpg/github-actions/.github/workflows/go-ci.yaml@master
+    with:
+      mongodb-version: "7.0"
+      test-env: '{"TEST_DB_URI": "mongodb://localhost:27017/unit-tests", "TEST_COLLECTION": "unit-tests", "LOG_LEVEL": "DEBUG"}'
+    secrets: inherit
