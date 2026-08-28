@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/sweetrpg/common.go/logging"
@@ -12,11 +13,11 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// GetWishlistByUser returns the given user's wishlist, or nil if they don't have one yet.
-func GetWishlistByUser(c context.Context, userID string) (*models.Wishlist, error) {
-	results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 1)
+// GetWishlist returns one wishlist by ID, or nil if it doesn't exist.
+func GetWishlist(c context.Context, id string) (*models.Wishlist, error) {
+	results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
 	if err != nil {
-		logging.Logger.Error("Error while querying database for wishlist", "userID", userID, "error", err)
+		logging.Logger.Error("Error while querying database for wishlist", "id", id, "error", err)
 		return nil, err
 	}
 	if len(results) == 0 {
@@ -25,25 +26,40 @@ func GetWishlistByUser(c context.Context, userID string) (*models.Wishlist, erro
 	return results[0], nil
 }
 
-// getOrCreateWishlist returns the user's wishlist, creating one (defaulting to private) if none
-// exists yet, per the "new wishlists default to private" requirement.
-func getOrCreateWishlist(c context.Context, userID string) (*models.Wishlist, error) {
-	wl, err := GetWishlistByUser(c, userID)
+// ListWishlistsByUser returns every wishlist owned by the given user.
+func ListWishlistsByUser(c context.Context, userID string) ([]*models.Wishlist, error) {
+	results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 0)
 	if err != nil {
+		logging.Logger.Error("Error while querying database for wishlists", "userID", userID, "error", err)
 		return nil, err
 	}
-	if wl != nil {
-		return wl, nil
+	return results, nil
+}
+
+// CreateWishlist creates a new named wishlist, defaulting to private visibility per the "new
+// wishlists default to private" requirement.
+func CreateWishlist(c context.Context, userID, name string) (*models.Wishlist, error) {
+	if name == "" {
+		return nil, fmt.Errorf("wishlist name must not be empty")
 	}
 
-	newWl := models.NewWishlist(primitive.NewObjectID().Hex(), userID)
-	newWl.CreatedAt = time.Now()
-	newWl.CreatedBy = userID
-	if _, err := database.Insert(wishlistCollection, newWl); err != nil {
+	wl := models.NewWishlist(primitive.NewObjectID().Hex(), userID, name)
+	wl.CreatedAt = time.Now()
+	wl.CreatedBy = userID
+	if _, err := database.Insert(wishlistCollection, wl); err != nil {
 		logging.Logger.Error("Error while inserting wishlist", "userID", userID, "error", err)
 		return nil, err
 	}
-	return &newWl, nil
+	return &wl, nil
+}
+
+// DeleteWishlist removes a wishlist, and its entries with it, entirely.
+func DeleteWishlist(c context.Context, id string) error {
+	_, err := database.Db.Collection(wishlistCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}})
+	if err != nil {
+		logging.Logger.Error("Error while deleting wishlist", "id", id, "error", err)
+	}
+	return err
 }
 
 func replaceWishlist(c context.Context, wl *models.Wishlist) error {
@@ -55,12 +71,12 @@ func replaceWishlist(c context.Context, wl *models.Wishlist) error {
 	return err
 }
 
-// AddWishlistEntry links a catalog volume into the user's wishlist, creating the wishlist if it
-// doesn't exist yet. A no-op if the volume is already present.
-func AddWishlistEntry(c context.Context, userID, volumeID string) (*models.Wishlist, error) {
-	wl, err := getOrCreateWishlist(c, userID)
-	if err != nil {
-		return nil, err
+// AddWishlistEntry links a catalog volume into the wishlist. A no-op if the volume is already
+// present.
+func AddWishlistEntry(c context.Context, wishlistID, volumeID string) (*models.Wishlist, error) {
+	wl, err := GetWishlist(c, wishlistID)
+	if err != nil || wl == nil {
+		return wl, err
 	}
 	for _, e := range wl.Entries {
 		if e.VolumeID == volumeID {
@@ -74,9 +90,9 @@ func AddWishlistEntry(c context.Context, userID, volumeID string) (*models.Wishl
 	return wl, nil
 }
 
-// RemoveWishlistEntry unlinks a catalog volume from the user's wishlist.
-func RemoveWishlistEntry(c context.Context, userID, volumeID string) (*models.Wishlist, error) {
-	wl, err := GetWishlistByUser(c, userID)
+// RemoveWishlistEntry unlinks a catalog volume from the wishlist.
+func RemoveWishlistEntry(c context.Context, wishlistID, volumeID string) (*models.Wishlist, error) {
+	wl, err := GetWishlist(c, wishlistID)
 	if err != nil || wl == nil {
 		return wl, err
 	}
@@ -93,12 +109,11 @@ func RemoveWishlistEntry(c context.Context, userID, volumeID string) (*models.Wi
 	return wl, nil
 }
 
-// SetWishlistVisibility updates the wishlist's visibility, creating the wishlist (private
-// default) first if the user doesn't have one yet.
-func SetWishlistVisibility(c context.Context, userID string, visibility models.Visibility) (*models.Wishlist, error) {
-	wl, err := getOrCreateWishlist(c, userID)
-	if err != nil {
-		return nil, err
+// SetWishlistVisibility updates the wishlist's visibility.
+func SetWishlistVisibility(c context.Context, wishlistID string, visibility models.Visibility) (*models.Wishlist, error) {
+	wl, err := GetWishlist(c, wishlistID)
+	if err != nil || wl == nil {
+		return wl, err
 	}
 	wl.Visibility = visibility
 	if err := replaceWishlist(c, wl); err != nil {
@@ -121,6 +136,7 @@ func WishlistToVO(wl *models.Wishlist, viewerID string, isFriend, isFriendOfFrie
 	return &vo.WishlistVO{
 		ID:         wl.ID,
 		UserID:     wl.UserID,
+		Name:       wl.Name,
 		Visibility: string(wl.Visibility),
 		Entries:    entries,
 	}
