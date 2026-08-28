@@ -63,7 +63,7 @@
 				
 				<option value="file3">github.com/sweetrpg/game-room-data.go/data/visibility.go (100.0%)</option>
 				
-				<option value="file4">github.com/sweetrpg/game-room-data.go/data/wishlist.go (64.1%)</option>
+				<option value="file4">github.com/sweetrpg/game-room-data.go/data/wishlist.go (66.7%)</option>
 				
 				</select>
 			</div>
@@ -498,17 +498,35 @@ import (
         "go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// GetWishlist returns one wishlist by ID, or nil if it doesn't exist.
-func GetWishlist(c context.Context, id string) (*models.Wishlist, error) <span class="cov10" title="11">{
+// GetWishlist returns one wishlist by ID, or nil if it doesn't exist. Unscoped by owner - only
+// for read paths, which apply visibility filtering separately via WishlistToVO/CanView. Write
+// paths must use getOwnedWishlist instead.
+func GetWishlist(c context.Context, id string) (*models.Wishlist, error) <span class="cov9" title="10">{
         results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for wishlist", "id", id, "error", err)
                 return nil, err
         }</span>
-        <span class="cov10" title="11">if len(results) == 0 </span><span class="cov1" title="1">{
+        <span class="cov9" title="10">if len(results) == 0 </span><span class="cov1" title="1">{
                 return nil, nil
         }</span>
-        <span class="cov9" title="10">return results[0], nil</span>
+        <span class="cov8" title="9">return results[0], nil</span>
+}
+
+// getOwnedWishlist returns the wishlist only if it exists and is owned by ownerUserID, via a
+// single query filtered on both fields. Returns (nil, nil) both when the wishlist doesn't exist
+// and when it's owned by someone else - callers needing to tell those apart (to choose between
+// a 403 and a 404 response) should follow up with GetWishlist.
+func getOwnedWishlist(c context.Context, id, ownerUserID string) (*models.Wishlist, error) <span class="cov6" title="5">{
+        results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}, nil, nil, 0, 1)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for owned wishlist", "id", id, "ownerUserID", ownerUserID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov6" title="5">if len(results) == 0 </span><span class="cov3" title="2">{
+                return nil, nil
+        }</span>
+        <span class="cov4" title="3">return results[0], nil</span>
 }
 
 // ListWishlistsByUser returns every wishlist owned by the given user.
@@ -523,44 +541,47 @@ func ListWishlistsByUser(c context.Context, userID string) ([]*models.Wishlist, 
 
 // CreateWishlist creates a new named wishlist, defaulting to private visibility per the "new
 // wishlists default to private" requirement.
-func CreateWishlist(c context.Context, userID, name string) (*models.Wishlist, error) <span class="cov9" title="10">{
+func CreateWishlist(c context.Context, userID, name string) (*models.Wishlist, error) <span class="cov10" title="12">{
         if name == "" </span><span class="cov1" title="1">{
                 return nil, fmt.Errorf("wishlist name must not be empty")
         }</span>
 
-        <span class="cov9" title="9">wl := models.NewWishlist(primitive.NewObjectID().Hex(), userID, name)
+        <span class="cov9" title="11">wl := models.NewWishlist(primitive.NewObjectID().Hex(), userID, name)
         wl.CreatedAt = time.Now()
         wl.CreatedBy = userID
         if _, err := database.Insert(wishlistCollection, wl); err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while inserting wishlist", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov9" title="9">return &amp;wl, nil</span>
+        <span class="cov9" title="11">return &amp;wl, nil</span>
 }
 
-// DeleteWishlist removes a wishlist, and its entries with it, entirely.
-func DeleteWishlist(c context.Context, id string) error <span class="cov1" title="1">{
-        _, err := database.Db.Collection(wishlistCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}})
+// DeleteWishlist removes a wishlist owned by ownerUserID, and its entries with it, entirely.
+// Returns whether a document was actually deleted, so callers can tell "not found" apart from
+// "found but not owned by ownerUserID".
+func DeleteWishlist(c context.Context, id, ownerUserID string) (bool, error) <span class="cov3" title="2">{
+        result, err := database.Db.Collection(wishlistCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}})
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while deleting wishlist", "id", id, "error", err)
+                return false, err
         }</span>
-        <span class="cov1" title="1">return err</span>
+        <span class="cov3" title="2">return result.DeletedCount &gt; 0, nil</span>
 }
 
-func replaceWishlist(c context.Context, wl *models.Wishlist) error <span class="cov5" title="3">{
+func replaceWishlist(c context.Context, wl *models.Wishlist) error <span class="cov4" title="3">{
         wl.UpdatedAt = time.Now()
-        _, err := database.Db.Collection(wishlistCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: wl.ID}}, wl)
+        _, err := database.Db.Collection(wishlistCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: wl.ID}, {Key: "user_id", Value: wl.UserID}}, wl)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while replacing wishlist", "id", wl.ID, "error", err)
         }</span>
-        <span class="cov5" title="3">return err</span>
+        <span class="cov4" title="3">return err</span>
 }
 
-// AddWishlistEntry links a catalog volume into the wishlist. A no-op if the volume is already
-// present.
-func AddWishlistEntry(c context.Context, wishlistID, volumeID string) (*models.Wishlist, error) <span class="cov1" title="1">{
-        wl, err := GetWishlist(c, wishlistID)
-        if err != nil || wl == nil </span><span class="cov0" title="0">{
+// AddWishlistEntry links a catalog volume into a wishlist owned by ownerUserID. A no-op if the
+// volume is already present.
+func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID string) (*models.Wishlist, error) <span class="cov3" title="2">{
+        wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
+        if err != nil || wl == nil </span><span class="cov1" title="1">{
                 return wl, err
         }</span>
         <span class="cov1" title="1">for _, e := range wl.Entries </span><span class="cov0" title="0">{
@@ -575,9 +596,9 @@ func AddWishlistEntry(c context.Context, wishlistID, volumeID string) (*models.W
         <span class="cov1" title="1">return wl, nil</span>
 }
 
-// RemoveWishlistEntry unlinks a catalog volume from the wishlist.
-func RemoveWishlistEntry(c context.Context, wishlistID, volumeID string) (*models.Wishlist, error) <span class="cov1" title="1">{
-        wl, err := GetWishlist(c, wishlistID)
+// RemoveWishlistEntry unlinks a catalog volume from a wishlist owned by ownerUserID.
+func RemoveWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID string) (*models.Wishlist, error) <span class="cov1" title="1">{
+        wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
         if err != nil || wl == nil </span><span class="cov0" title="0">{
                 return wl, err
         }</span>
@@ -594,10 +615,10 @@ func RemoveWishlistEntry(c context.Context, wishlistID, volumeID string) (*model
         <span class="cov1" title="1">return wl, nil</span>
 }
 
-// SetWishlistVisibility updates the wishlist's visibility.
-func SetWishlistVisibility(c context.Context, wishlistID string, visibility models.Visibility) (*models.Wishlist, error) <span class="cov1" title="1">{
-        wl, err := GetWishlist(c, wishlistID)
-        if err != nil || wl == nil </span><span class="cov0" title="0">{
+// SetWishlistVisibility updates the visibility of a wishlist owned by ownerUserID.
+func SetWishlistVisibility(c context.Context, wishlistID, ownerUserID string, visibility models.Visibility) (*models.Wishlist, error) <span class="cov3" title="2">{
+        wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
+        if err != nil || wl == nil </span><span class="cov1" title="1">{
                 return wl, err
         }</span>
         <span class="cov1" title="1">wl.Visibility = visibility
