@@ -13,11 +13,29 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// GetWishlist returns one wishlist by ID, or nil if it doesn't exist.
+// GetWishlist returns one wishlist by ID, or nil if it doesn't exist. Unscoped by owner - only
+// for read paths, which apply visibility filtering separately via WishlistToVO/CanView. Write
+// paths must use getOwnedWishlist instead.
 func GetWishlist(c context.Context, id string) (*models.Wishlist, error) {
 	results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
 	if err != nil {
 		logging.Logger.Error("Error while querying database for wishlist", "id", id, "error", err)
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	return results[0], nil
+}
+
+// getOwnedWishlist returns the wishlist only if it exists and is owned by ownerUserID, via a
+// single query filtered on both fields. Returns (nil, nil) both when the wishlist doesn't exist
+// and when it's owned by someone else - callers needing to tell those apart (to choose between
+// a 403 and a 404 response) should follow up with GetWishlist.
+func getOwnedWishlist(c context.Context, id, ownerUserID string) (*models.Wishlist, error) {
+	results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}, nil, nil, 0, 1)
+	if err != nil {
+		logging.Logger.Error("Error while querying database for owned wishlist", "id", id, "ownerUserID", ownerUserID, "error", err)
 		return nil, err
 	}
 	if len(results) == 0 {
@@ -53,28 +71,31 @@ func CreateWishlist(c context.Context, userID, name string) (*models.Wishlist, e
 	return &wl, nil
 }
 
-// DeleteWishlist removes a wishlist, and its entries with it, entirely.
-func DeleteWishlist(c context.Context, id string) error {
-	_, err := database.Db.Collection(wishlistCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}})
+// DeleteWishlist removes a wishlist owned by ownerUserID, and its entries with it, entirely.
+// Returns whether a document was actually deleted, so callers can tell "not found" apart from
+// "found but not owned by ownerUserID".
+func DeleteWishlist(c context.Context, id, ownerUserID string) (bool, error) {
+	result, err := database.Db.Collection(wishlistCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}})
 	if err != nil {
 		logging.Logger.Error("Error while deleting wishlist", "id", id, "error", err)
+		return false, err
 	}
-	return err
+	return result.DeletedCount > 0, nil
 }
 
 func replaceWishlist(c context.Context, wl *models.Wishlist) error {
 	wl.UpdatedAt = time.Now()
-	_, err := database.Db.Collection(wishlistCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: wl.ID}}, wl)
+	_, err := database.Db.Collection(wishlistCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: wl.ID}, {Key: "user_id", Value: wl.UserID}}, wl)
 	if err != nil {
 		logging.Logger.Error("Error while replacing wishlist", "id", wl.ID, "error", err)
 	}
 	return err
 }
 
-// AddWishlistEntry links a catalog volume into the wishlist. A no-op if the volume is already
-// present.
-func AddWishlistEntry(c context.Context, wishlistID, volumeID string) (*models.Wishlist, error) {
-	wl, err := GetWishlist(c, wishlistID)
+// AddWishlistEntry links a catalog volume into a wishlist owned by ownerUserID. A no-op if the
+// volume is already present.
+func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID string) (*models.Wishlist, error) {
+	wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
 	if err != nil || wl == nil {
 		return wl, err
 	}
@@ -90,9 +111,9 @@ func AddWishlistEntry(c context.Context, wishlistID, volumeID string) (*models.W
 	return wl, nil
 }
 
-// RemoveWishlistEntry unlinks a catalog volume from the wishlist.
-func RemoveWishlistEntry(c context.Context, wishlistID, volumeID string) (*models.Wishlist, error) {
-	wl, err := GetWishlist(c, wishlistID)
+// RemoveWishlistEntry unlinks a catalog volume from a wishlist owned by ownerUserID.
+func RemoveWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID string) (*models.Wishlist, error) {
+	wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
 	if err != nil || wl == nil {
 		return wl, err
 	}
@@ -109,9 +130,9 @@ func RemoveWishlistEntry(c context.Context, wishlistID, volumeID string) (*model
 	return wl, nil
 }
 
-// SetWishlistVisibility updates the wishlist's visibility.
-func SetWishlistVisibility(c context.Context, wishlistID string, visibility models.Visibility) (*models.Wishlist, error) {
-	wl, err := GetWishlist(c, wishlistID)
+// SetWishlistVisibility updates the visibility of a wishlist owned by ownerUserID.
+func SetWishlistVisibility(c context.Context, wishlistID, ownerUserID string, visibility models.Visibility) (*models.Wishlist, error) {
+	wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
 	if err != nil || wl == nil {
 		return wl, err
 	}
