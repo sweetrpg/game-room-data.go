@@ -12,11 +12,29 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// GetTable returns one table by ID, or nil if it doesn't exist.
+// GetTable returns one table by ID, or nil if it doesn't exist. Unscoped by owner - only for
+// read paths, which apply visibility filtering separately via TableToVO/CanView. Write paths
+// must use getOwnedTable instead.
 func GetTable(c context.Context, id string) (*models.Table, error) {
 	results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
 	if err != nil {
 		logging.Logger.Error("Error while querying database for table", "id", id, "error", err)
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	return results[0], nil
+}
+
+// getOwnedTable returns the table only if it exists and is owned by ownerUserID, via a single
+// query filtered on both fields. Returns (nil, nil) both when the table doesn't exist and when
+// it's owned by someone else - callers needing to tell those apart (to choose between a 403 and
+// a 404 response) should follow up with GetTable.
+func getOwnedTable(c context.Context, id, ownerUserID string) (*models.Table, error) {
+	results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}, nil, nil, 0, 1)
+	if err != nil {
+		logging.Logger.Error("Error while querying database for owned table", "id", id, "ownerUserID", ownerUserID, "error", err)
 		return nil, err
 	}
 	if len(results) == 0 {
@@ -50,16 +68,16 @@ func CreateTable(c context.Context, userID, name string) (*models.Table, error) 
 
 func replaceTable(c context.Context, tbl *models.Table) error {
 	tbl.UpdatedAt = time.Now()
-	_, err := database.Db.Collection(tableCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: tbl.ID}}, tbl)
+	_, err := database.Db.Collection(tableCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: tbl.ID}, {Key: "user_id", Value: tbl.UserID}}, tbl)
 	if err != nil {
 		logging.Logger.Error("Error while replacing table", "id", tbl.ID, "error", err)
 	}
 	return err
 }
 
-// UpdateTableName renames a table.
-func UpdateTableName(c context.Context, id, name string) (*models.Table, error) {
-	tbl, err := GetTable(c, id)
+// UpdateTableName renames a table owned by ownerUserID.
+func UpdateTableName(c context.Context, id, ownerUserID, name string) (*models.Table, error) {
+	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
 		return tbl, err
 	}
@@ -70,9 +88,9 @@ func UpdateTableName(c context.Context, id, name string) (*models.Table, error) 
 	return tbl, nil
 }
 
-// SetTableVisibility updates a table's visibility.
-func SetTableVisibility(c context.Context, id string, visibility models.Visibility) (*models.Table, error) {
-	tbl, err := GetTable(c, id)
+// SetTableVisibility updates the visibility of a table owned by ownerUserID.
+func SetTableVisibility(c context.Context, id, ownerUserID string, visibility models.Visibility) (*models.Table, error) {
+	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
 		return tbl, err
 	}
@@ -83,9 +101,10 @@ func SetTableVisibility(c context.Context, id string, visibility models.Visibili
 	return tbl, nil
 }
 
-// AddTableVolume links a catalog volume into a table. A no-op if already present.
-func AddTableVolume(c context.Context, id, volumeID string) (*models.Table, error) {
-	tbl, err := GetTable(c, id)
+// AddTableVolume links a catalog volume into a table owned by ownerUserID. A no-op if already
+// present.
+func AddTableVolume(c context.Context, id, ownerUserID, volumeID string) (*models.Table, error) {
+	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
 		return tbl, err
 	}
@@ -101,9 +120,9 @@ func AddTableVolume(c context.Context, id, volumeID string) (*models.Table, erro
 	return tbl, nil
 }
 
-// RemoveTableVolume unlinks a catalog volume from a table.
-func RemoveTableVolume(c context.Context, id, volumeID string) (*models.Table, error) {
-	tbl, err := GetTable(c, id)
+// RemoveTableVolume unlinks a catalog volume from a table owned by ownerUserID.
+func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID string) (*models.Table, error) {
+	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
 		return tbl, err
 	}
@@ -120,13 +139,15 @@ func RemoveTableVolume(c context.Context, id, volumeID string) (*models.Table, e
 	return tbl, nil
 }
 
-// DeleteTable removes a table entirely.
-func DeleteTable(c context.Context, id string) error {
-	_, err := database.Db.Collection(tableCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}})
+// DeleteTable removes a table owned by ownerUserID. Returns whether a document was actually
+// deleted, so callers can tell "not found" apart from "found but not owned by ownerUserID".
+func DeleteTable(c context.Context, id, ownerUserID string) (bool, error) {
+	result, err := database.Db.Collection(tableCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}})
 	if err != nil {
 		logging.Logger.Error("Error while deleting table", "id", id, "error", err)
+		return false, err
 	}
-	return err
+	return result.DeletedCount > 0, nil
 }
 
 // TableToVO converts a table model into its VO, or nil if viewerID may not see it at all.
