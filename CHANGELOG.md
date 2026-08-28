@@ -10,6 +10,13 @@
 
 
 
+## 0.2.0 - 2026-08-28
+
+### Added
+- Stamp AddedAt on new library/wishlist entries
+
+
+
 ## 0.1.0 - 2026-08-25
 
 ### Added
