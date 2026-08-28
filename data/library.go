@@ -67,7 +67,7 @@ func AddLibraryEntry(c context.Context, userID, volumeID string) (*models.Librar
 			return lib, nil
 		}
 	}
-	lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID})
+	lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now()})
 	if err := replaceLibrary(c, lib); err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFrien
 			s := string(*e.VisibilityOverride)
 			override = &s
 		}
-		entries = append(entries, vo.LibraryEntryVO{VolumeID: e.VolumeID, VisibilityOverride: override})
+		entries = append(entries, vo.LibraryEntryVO{VolumeID: e.VolumeID, VisibilityOverride: override, AddedAt: e.AddedAt})
 	}
 
 	return &vo.LibraryVO{
