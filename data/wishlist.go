@@ -67,7 +67,7 @@ func AddWishlistEntry(c context.Context, userID, volumeID string) (*models.Wishl
 			return wl, nil
 		}
 	}
-	wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID})
+	wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID, AddedAt: time.Now()})
 	if err := replaceWishlist(c, wl); err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func WishlistToVO(wl *models.Wishlist, viewerID string, isFriend, isFriendOfFrie
 
 	entries := make([]vo.WishlistEntryVO, 0, len(wl.Entries))
 	for _, e := range wl.Entries {
-		entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID})
+		entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID, AddedAt: e.AddedAt})
 	}
 
 	return &vo.WishlistVO{
