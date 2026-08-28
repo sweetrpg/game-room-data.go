@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/sweetrpg/common.go v0.0.15
-	github.com/sweetrpg/game-room-objects.go v0.0.455-0.20260825135559-a8e6a146b209
+	github.com/sweetrpg/game-room-objects.go v0.2.0
 	github.com/sweetrpg/mongodb.go v0.0.193
 	go.mongodb.org/mongo-driver v1.17.9
 )
