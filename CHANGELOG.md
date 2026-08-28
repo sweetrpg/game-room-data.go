@@ -1,4 +1,15 @@
 
+## 0.3.0 - 2026-08-28
+
+### Added
+- Scope data access to wishlist ID, add list/create/delete and name migration
+
+
+### Fixed
+- Scope write queries to the resource owner
+
+
+
 ## 0.2.0 - 2026-08-28
 
 ### Added
