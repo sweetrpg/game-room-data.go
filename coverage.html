@@ -153,7 +153,7 @@ func AddLibraryEntry(c context.Context, userID, volumeID string) (*models.Librar
                         return lib, nil
                 }</span>
         }
-        <span class="cov0" title="0">lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID})
+        <span class="cov0" title="0">lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now()})
         if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
@@ -227,7 +227,7 @@ func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFrien
                         s := string(*e.VisibilityOverride)
                         override = &amp;s
                 }</span>
-                <span class="cov0" title="0">entries = append(entries, vo.LibraryEntryVO{VolumeID: e.VolumeID, VisibilityOverride: override})</span>
+                <span class="cov0" title="0">entries = append(entries, vo.LibraryEntryVO{VolumeID: e.VolumeID, VisibilityOverride: override, AddedAt: e.AddedAt})</span>
         }
 
         <span class="cov0" title="0">return &amp;vo.LibraryVO{
@@ -497,7 +497,7 @@ func AddWishlistEntry(c context.Context, userID, volumeID string) (*models.Wishl
                         return wl, nil
                 }</span>
         }
-        <span class="cov0" title="0">wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID})
+        <span class="cov0" title="0">wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID, AddedAt: time.Now()})
         if err := replaceWishlist(c, wl); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
@@ -545,7 +545,7 @@ func WishlistToVO(wl *models.Wishlist, viewerID string, isFriend, isFriendOfFrie
 
         <span class="cov0" title="0">entries := make([]vo.WishlistEntryVO, 0, len(wl.Entries))
         for _, e := range wl.Entries </span><span class="cov0" title="0">{
-                entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID})
+                entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID, AddedAt: e.AddedAt})
         }</span>
 
         <span class="cov0" title="0">return &amp;vo.WishlistVO{
