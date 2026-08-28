@@ -73,14 +73,32 @@ func (suite *WishlistTestSuite) TestDeleteWishlistRemovesOnlyTargeted() {
 	remove, err := CreateWishlist(ctx, userID, "Remove me")
 	assert.NoError(suite.T(), err)
 
-	err = DeleteWishlist(ctx, remove.ID)
+	deleted, err := DeleteWishlist(ctx, remove.ID, userID)
 	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), deleted)
 
 	got, err := GetWishlist(ctx, remove.ID)
 	assert.NoError(suite.T(), err)
 	assert.Nil(suite.T(), got)
 
 	stillThere, err := GetWishlist(ctx, keep.ID)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), stillThere)
+}
+
+func (suite *WishlistTestSuite) TestDeleteWishlistRejectsNonOwner() {
+	ctx := context.Background()
+	owner := primitive.NewObjectID().Hex()
+	intruder := primitive.NewObjectID().Hex()
+
+	wl, err := CreateWishlist(ctx, owner, "Mine")
+	assert.NoError(suite.T(), err)
+
+	deleted, err := DeleteWishlist(ctx, wl.ID, intruder)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), deleted)
+
+	stillThere, err := GetWishlist(ctx, wl.ID)
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), stillThere)
 }
@@ -94,7 +112,7 @@ func (suite *WishlistTestSuite) TestEntryAndVisibilityScopedToWishlistID() {
 	b, err := CreateWishlist(ctx, userID, "B")
 	assert.NoError(suite.T(), err)
 
-	updated, err := AddWishlistEntry(ctx, a.ID, "vol-1")
+	updated, err := AddWishlistEntry(ctx, a.ID, userID, "vol-1")
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), updated.Entries, 1)
 
@@ -102,7 +120,7 @@ func (suite *WishlistTestSuite) TestEntryAndVisibilityScopedToWishlistID() {
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), untouched.Entries, 0)
 
-	updated, err = SetWishlistVisibility(ctx, a.ID, models.VisibilityPublic)
+	updated, err = SetWishlistVisibility(ctx, a.ID, userID, models.VisibilityPublic)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), models.VisibilityPublic, updated.Visibility)
 
@@ -110,9 +128,31 @@ func (suite *WishlistTestSuite) TestEntryAndVisibilityScopedToWishlistID() {
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), models.VisibilityPrivate, untouched.Visibility)
 
-	updated, err = RemoveWishlistEntry(ctx, a.ID, "vol-1")
+	updated, err = RemoveWishlistEntry(ctx, a.ID, userID, "vol-1")
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), updated.Entries, 0)
+}
+
+func (suite *WishlistTestSuite) TestEntryMutatorsRejectNonOwner() {
+	ctx := context.Background()
+	owner := primitive.NewObjectID().Hex()
+	intruder := primitive.NewObjectID().Hex()
+
+	wl, err := CreateWishlist(ctx, owner, "Mine")
+	assert.NoError(suite.T(), err)
+
+	got, err := AddWishlistEntry(ctx, wl.ID, intruder, "vol-1")
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), got)
+
+	got, err = SetWishlistVisibility(ctx, wl.ID, intruder, models.VisibilityPublic)
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), got)
+
+	untouched, err := GetWishlist(ctx, wl.ID)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), models.VisibilityPrivate, untouched.Visibility)
+	assert.Len(suite.T(), untouched.Entries, 0)
 }
 
 func TestWishlistTestSuite(t *testing.T) {
