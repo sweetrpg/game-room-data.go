@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/sweetrpg/common.go/logging"
@@ -56,8 +57,9 @@ func replaceLibrary(c context.Context, lib *models.Library) error {
 }
 
 // AddLibraryEntry links a catalog volume into the user's library, creating the library if it
-// doesn't exist yet. A no-op if the volume is already present.
-func AddLibraryEntry(c context.Context, userID, volumeID string) (*models.Library, error) {
+// doesn't exist yet. A no-op if the volume is already present. volumeTitle is a denormalized
+// snapshot of the volume's title at add time so entries can be displayed without a catalog lookup.
+func AddLibraryEntry(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) {
 	lib, err := getOrCreateLibrary(c, userID)
 	if err != nil {
 		return nil, err
@@ -67,7 +69,7 @@ func AddLibraryEntry(c context.Context, userID, volumeID string) (*models.Librar
 			return lib, nil
 		}
 	}
-	lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now()})
+	lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now(), VolumeTitle: volumeTitle})
 	if err := replaceLibrary(c, lib); err != nil {
 		return nil, err
 	}
@@ -126,6 +128,27 @@ func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID strin
 	return lib, nil
 }
 
+// ErrLibraryEntryNotFound is returned when an update targets an entry that isn't in the library.
+var ErrLibraryEntryNotFound = errors.New("library entry not found")
+
+// UpdateLibraryEntryTitle refreshes the denormalized title snapshot on a single library entry.
+func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) {
+	lib, err := GetLibraryByUser(c, userID)
+	if err != nil || lib == nil {
+		return lib, err
+	}
+	for i, e := range lib.Entries {
+		if e.VolumeID == volumeID {
+			lib.Entries[i].VolumeTitle = volumeTitle
+			if err := replaceLibrary(c, lib); err != nil {
+				return nil, err
+			}
+			return lib, nil
+		}
+	}
+	return nil, ErrLibraryEntryNotFound
+}
+
 // LibraryToVO converts a library model, filtered to what viewerID may see, into its VO. ownerID
 // is the library's own user ID; isFriend/isFriendOfFriend describe the viewer's relationship to
 // the owner (always false today - see CanView).
@@ -141,7 +164,7 @@ func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFrien
 			s := string(*e.VisibilityOverride)
 			override = &s
 		}
-		entries = append(entries, vo.LibraryEntryVO{VolumeID: e.VolumeID, VisibilityOverride: override, AddedAt: e.AddedAt})
+		entries = append(entries, vo.LibraryEntryVO{VolumeID: e.VolumeID, VisibilityOverride: override, AddedAt: e.AddedAt, VolumeTitle: e.VolumeTitle})
 	}
 
 	return &vo.LibraryVO{
