@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/sweetrpg/game-room-data.go/data/library.go (0.0%)</option>
+				<option value="file0">github.com/sweetrpg/game-room-data.go/data/library.go (50.6%)</option>
 				
 				<option value="file1">github.com/sweetrpg/game-room-data.go/data/migration.go (75.0%)</option>
 				
@@ -90,6 +90,7 @@
 
 import (
         "context"
+        "errors"
         "time"
 
         "github.com/sweetrpg/common.go/logging"
@@ -101,65 +102,66 @@ import (
 )
 
 // GetLibraryByUser returns the given user's library, or nil if they don't have one yet.
-func GetLibraryByUser(c context.Context, userID string) (*models.Library, error) <span class="cov0" title="0">{
+func GetLibraryByUser(c context.Context, userID string) (*models.Library, error) <span class="cov10" title="11">{
         results, err := database.Query[models.Library](libraryCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for library", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
+        <span class="cov10" title="11">if len(results) == 0 </span><span class="cov7" title="5">{
                 return nil, nil
         }</span>
-        <span class="cov0" title="0">return results[0], nil</span>
+        <span class="cov7" title="6">return results[0], nil</span>
 }
 
 // getOrCreateLibrary returns the user's library, creating one (defaulting to private) if none
 // exists yet, per the "new library defaults to private" requirement.
-func getOrCreateLibrary(c context.Context, userID string) (*models.Library, error) <span class="cov0" title="0">{
+func getOrCreateLibrary(c context.Context, userID string) (*models.Library, error) <span class="cov7" title="6">{
         lib, err := GetLibraryByUser(c, userID)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov0" title="0">if lib != nil </span><span class="cov0" title="0">{
+        <span class="cov7" title="6">if lib != nil </span><span class="cov1" title="1">{
                 return lib, nil
         }</span>
 
-        <span class="cov0" title="0">newLib := models.NewLibrary(primitive.NewObjectID().Hex(), userID)
+        <span class="cov7" title="5">newLib := models.NewLibrary(primitive.NewObjectID().Hex(), userID)
         newLib.CreatedAt = time.Now()
         newLib.CreatedBy = userID
         if _, err := database.Insert(libraryCollection, newLib); err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while inserting library", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov0" title="0">return &amp;newLib, nil</span>
+        <span class="cov7" title="5">return &amp;newLib, nil</span>
 }
 
-func replaceLibrary(c context.Context, lib *models.Library) error <span class="cov0" title="0">{
+func replaceLibrary(c context.Context, lib *models.Library) error <span class="cov7" title="6">{
         lib.UpdatedAt = time.Now()
         _, err := database.Db.Collection(libraryCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: lib.ID}}, lib)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while replacing library", "id", lib.ID, "error", err)
         }</span>
-        <span class="cov0" title="0">return err</span>
+        <span class="cov7" title="6">return err</span>
 }
 
 // AddLibraryEntry links a catalog volume into the user's library, creating the library if it
-// doesn't exist yet. A no-op if the volume is already present.
-func AddLibraryEntry(c context.Context, userID, volumeID string) (*models.Library, error) <span class="cov0" title="0">{
+// doesn't exist yet. A no-op if the volume is already present. volumeTitle is a denormalized
+// snapshot of the volume's title at add time so entries can be displayed without a catalog lookup.
+func AddLibraryEntry(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) <span class="cov7" title="6">{
         lib, err := getOrCreateLibrary(c, userID)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov0" title="0">for _, e := range lib.Entries </span><span class="cov0" title="0">{
-                if e.VolumeID == volumeID </span><span class="cov0" title="0">{
+        <span class="cov7" title="6">for _, e := range lib.Entries </span><span class="cov1" title="1">{
+                if e.VolumeID == volumeID </span><span class="cov1" title="1">{
                         return lib, nil
                 }</span>
         }
-        <span class="cov0" title="0">lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now()})
+        <span class="cov7" title="5">lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now(), VolumeTitle: volumeTitle})
         if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov0" title="0">return lib, nil</span>
+        <span class="cov7" title="5">return lib, nil</span>
 }
 
 // RemoveLibraryEntry unlinks a catalog volume from the user's library.
@@ -214,25 +216,46 @@ func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID strin
         <span class="cov0" title="0">return lib, nil</span>
 }
 
+// ErrLibraryEntryNotFound is returned when an update targets an entry that isn't in the library.
+var ErrLibraryEntryNotFound = errors.New("library entry not found")
+
+// UpdateLibraryEntryTitle refreshes the denormalized title snapshot on a single library entry.
+func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) <span class="cov3" title="2">{
+        lib, err := GetLibraryByUser(c, userID)
+        if err != nil || lib == nil </span><span class="cov0" title="0">{
+                return lib, err
+        }</span>
+        <span class="cov3" title="2">for i, e := range lib.Entries </span><span class="cov3" title="2">{
+                if e.VolumeID == volumeID </span><span class="cov1" title="1">{
+                        lib.Entries[i].VolumeTitle = volumeTitle
+                        if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+                                return nil, err
+                        }</span>
+                        <span class="cov1" title="1">return lib, nil</span>
+                }
+        }
+        <span class="cov1" title="1">return nil, ErrLibraryEntryNotFound</span>
+}
+
 // LibraryToVO converts a library model, filtered to what viewerID may see, into its VO. ownerID
 // is the library's own user ID; isFriend/isFriendOfFriend describe the viewer's relationship to
 // the owner (always false today - see CanView).
-func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFriend bool) *vo.LibraryVO <span class="cov0" title="0">{
+func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFriend bool) *vo.LibraryVO <span class="cov1" title="1">{
         entries := make([]vo.LibraryEntryVO, 0, len(lib.Entries))
-        for _, e := range lib.Entries </span><span class="cov0" title="0">{
+        for _, e := range lib.Entries </span><span class="cov1" title="1">{
                 effective := e.EffectiveVisibility(lib.DefaultVisibility)
                 if !CanView(effective, lib.UserID, viewerID, isFriend, isFriendOfFriend) </span><span class="cov0" title="0">{
                         continue</span>
                 }
-                <span class="cov0" title="0">var override *string
+                <span class="cov1" title="1">var override *string
                 if e.VisibilityOverride != nil </span><span class="cov0" title="0">{
                         s := string(*e.VisibilityOverride)
                         override = &amp;s
                 }</span>
-                <span class="cov0" title="0">entries = append(entries, vo.LibraryEntryVO{VolumeID: e.VolumeID, VisibilityOverride: override, AddedAt: e.AddedAt})</span>
+                <span class="cov1" title="1">entries = append(entries, vo.LibraryEntryVO{VolumeID: e.VolumeID, VisibilityOverride: override, AddedAt: e.AddedAt, VolumeTitle: e.VolumeTitle})</span>
         }
 
-        <span class="cov0" title="0">return &amp;vo.LibraryVO{
+        <span class="cov1" title="1">return &amp;vo.LibraryVO{
                 ID:                lib.ID,
                 UserID:            lib.UserID,
                 DefaultVisibility: string(lib.DefaultVisibility),
@@ -449,8 +472,8 @@ import "github.com/sweetrpg/game-room-objects.go/models"
 // Friendship isn't implemented yet, so callers always pass isFriend/isFriendOfFriend as false -
 // this is the single code path that will start returning real friend-scoped results once
 // friendship ships, per design.md.
-func CanView(vis models.Visibility, ownerID, viewerID string, isFriend, isFriendOfFriend bool) bool <span class="cov10" title="10">{
-        if viewerID != "" &amp;&amp; viewerID == ownerID </span><span class="cov1" title="1">{
+func CanView(vis models.Visibility, ownerID, viewerID string, isFriend, isFriendOfFriend bool) bool <span class="cov10" title="11">{
+        if viewerID != "" &amp;&amp; viewerID == ownerID </span><span class="cov3" title="2">{
                 return true
         }</span>
 
