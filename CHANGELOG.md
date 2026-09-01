@@ -1,3 +1,12 @@
+
+## 0.5.0 - 2026-09-01
+
+### Added
+- Bulk-update volume title across all users by volume ID
+- Stamp model-core audit fields, soft-delete, VO passthrough
+- Bring UpdateLibraryEntryTitleByVolume into the convention
+
+
 ## 0.4.0 - 2026-08-30
 
 ### Added
