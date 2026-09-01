@@ -50,7 +50,7 @@ func getOrCreateLibrary(c context.Context, userID, actingUserID string) (*models
 
 func replaceLibrary(c context.Context, lib *models.Library, actingUserID string) error {
 	stampUpdate(&lib.Auditable, actingUserID, time.Now())
-	_, err := database.Db.Collection(libraryCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: lib.ID}}), lib)
+	_, err := database.Db.Collection(libraryCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: lib.ID}, {Key: "user_id", Value: lib.UserID}}), lib)
 	if err != nil {
 		logging.Logger.Error("Error while replacing library", "id", lib.ID, "error", err)
 	}
