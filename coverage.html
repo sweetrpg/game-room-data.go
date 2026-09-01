@@ -179,10 +179,14 @@ func auditVO(a modelcore.Auditable) modelcorevo.AuditableVO <span class="cov3" t
         }
 }</span>
 
-// live appends the soft-delete exclusion to a query filter. {deleted_at: nil} matches both an
-// absent field (docs not yet backfilled) and an explicit null (live docs post-backfill).
-func live(filter bson.D) bson.D <span class="cov10" title="75">{
-        return append(filter, bson.E{Key: "deleted_at", Value: nil})
+// live returns a copy of the query filter with the soft-delete exclusion appended.
+// {deleted_at: nil} matches both an absent field (docs not yet backfilled) and an explicit null
+// (live docs post-backfill). It copies rather than appending in place so a caller's slice is
+// never aliased or mutated.
+func live(filter bson.D) bson.D <span class="cov10" title="76">{
+        out := make(bson.D, len(filter), len(filter)+1)
+        copy(out, filter)
+        return append(out, bson.E{Key: "deleted_at", Value: nil})
 }</span>
 
 // softDeleteSet is the $set document for a soft delete: marks the record deleted and advances
@@ -363,7 +367,7 @@ func getOrCreateLibrary(c context.Context, userID, actingUserID string) (*models
 
 func replaceLibrary(c context.Context, lib *models.Library, actingUserID string) error <span class="cov8" title="15">{
         stampUpdate(&amp;lib.Auditable, actingUserID, time.Now())
-        _, err := database.Db.Collection(libraryCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: lib.ID}}), lib)
+        _, err := database.Db.Collection(libraryCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: lib.ID}, {Key: "user_id", Value: lib.UserID}}), lib)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while replacing library", "id", lib.ID, "error", err)
         }</span>
