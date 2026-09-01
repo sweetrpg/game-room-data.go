@@ -72,7 +72,7 @@ func backfillCollection(c context.Context, name string, dryRun bool) (Collection
 		logging.Logger.Error("Error finding audit-backfill candidates", "collection", name, "error", err)
 		return res, err
 	}
-	defer cursor.Close(c)
+	defer func() { _ = cursor.Close(c) }()
 
 	for cursor.Next(c) {
 		var doc struct {

@@ -8,6 +8,11 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 )
 
+// SystemActor is stamped into updated_by for writes not driven by a user request - currently the
+// event-driven volume-title denormalization refresh, which spans all owners on a trusted catalog
+// event rather than a caller action.
+const SystemActor = "system"
+
 // stampCreate sets all four create/update audit fields on a record being inserted, so a freshly
 // created document has created_at == updated_at and both *_by set to the acting user.
 func stampCreate(a *modelcore.Auditable, actingUserID string, now time.Time) {

@@ -11,7 +11,6 @@ import (
 	"github.com/sweetrpg/mongodb.go/database"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // GetLibraryByUser returns the given user's library, or nil if they don't have one yet or it has
@@ -159,12 +158,12 @@ func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle, a
 // applies to user-initiated access, not to this event-driven denormalization refresh. Idempotent:
 // a replay with an unchanged title matches no entries and returns an empty slice.
 func UpdateLibraryEntryTitleByVolume(c context.Context, volumeID, volumeTitle string) ([]string, error) {
-	stale, err := database.Query[models.Library](libraryCollection, bson.D{
+	stale, err := database.Query[models.Library](libraryCollection, live(bson.D{
 		{Key: "entries", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
 			{Key: "volume_id", Value: volumeID},
 			{Key: "volume_title", Value: bson.D{{Key: "$ne", Value: volumeTitle}}},
 		}}}},
-	}, nil, nil, 0, 0)
+	}), nil, nil, 0, 0)
 	if err != nil {
 		logging.Logger.Error("Error while querying libraries for volume title sync", "volumeID", volumeID, "error", err)
 		return nil, err
@@ -173,24 +172,21 @@ func UpdateLibraryEntryTitleByVolume(c context.Context, volumeID, volumeTitle st
 		return []string{}, nil
 	}
 
+	// ponytail: one whole-document replace per affected library. A volume retitle is a rare
+	// catalog event and the fan-out is small (users who own that volume), so N replaces beats a
+	// positional-array $set here - and it reuses replaceLibrary's audit stamping. Revisit with a
+	// bulk write if a single volume ever lands in tens of thousands of libraries.
 	userIDs := make([]string, 0, len(stale))
 	for _, lib := range stale {
+		for i := range lib.Entries {
+			if lib.Entries[i].VolumeID == volumeID {
+				lib.Entries[i].VolumeTitle = volumeTitle
+			}
+		}
+		if err := replaceLibrary(c, lib, SystemActor); err != nil {
+			return nil, err
+		}
 		userIDs = append(userIDs, lib.UserID)
-	}
-
-	_, err = database.Db.Collection(libraryCollection).UpdateMany(c,
-		bson.D{{Key: "entries.volume_id", Value: volumeID}},
-		bson.D{{Key: "$set", Value: bson.D{
-			{Key: "entries.$[e].volume_title", Value: volumeTitle},
-			{Key: "updated_at", Value: time.Now()},
-		}}},
-		options.Update().SetArrayFilters(options.ArrayFilters{
-			Filters: []interface{}{bson.D{{Key: "e.volume_id", Value: volumeID}}},
-		}),
-	)
-	if err != nil {
-		logging.Logger.Error("Error while bulk-updating library entry titles", "volumeID", volumeID, "error", err)
-		return nil, err
 	}
 	return userIDs, nil
 }

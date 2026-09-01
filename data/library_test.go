@@ -135,11 +135,11 @@ func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleByVolume() {
 		primitive.NewObjectID().Hex(),
 	}
 	for _, uid := range changed {
-		_, err := AddLibraryEntry(ctx, uid, target, "Old Title")
+		_, err := AddLibraryEntry(ctx, uid, target, "Old Title", uid)
 		assert.NoError(suite.T(), err)
 	}
 	untouched := primitive.NewObjectID().Hex()
-	_, err := AddLibraryEntry(ctx, untouched, other, "Keep Me")
+	_, err := AddLibraryEntry(ctx, untouched, other, "Keep Me", untouched)
 	assert.NoError(suite.T(), err)
 
 	got, err := UpdateLibraryEntryTitleByVolume(ctx, target, "New Title")
@@ -150,6 +150,8 @@ func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleByVolume() {
 		lib, err := GetLibraryByUser(ctx, uid)
 		assert.NoError(suite.T(), err)
 		assert.Equal(suite.T(), "New Title", lib.Entries[0].VolumeTitle)
+		// event-driven refresh stamps the system actor, not a user
+		assert.Equal(suite.T(), SystemActor, lib.UpdatedBy)
 	}
 	otherLib, err := GetLibraryByUser(ctx, untouched)
 	assert.NoError(suite.T(), err)
