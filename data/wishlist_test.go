@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
@@ -11,6 +12,7 @@ import (
 	"github.com/sweetrpg/game-room-objects.go/models"
 	"github.com/sweetrpg/mongodb.go/constants"
 	"github.com/sweetrpg/mongodb.go/database"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -28,12 +30,13 @@ func (suite *WishlistTestSuite) TestListWishlistsByUser() {
 	userID := primitive.NewObjectID().Hex()
 	ctx := context.Background()
 
-	_, err := CreateWishlist(ctx, userID, "Birthday")
+	_, err := CreateWishlist(ctx, userID, "Birthday", userID)
 	assert.NoError(suite.T(), err)
-	_, err = CreateWishlist(ctx, userID, "Con haul")
+	_, err = CreateWishlist(ctx, userID, "Con haul", userID)
 	assert.NoError(suite.T(), err)
 	// noise: a different user's wishlist must not show up
-	_, err = CreateWishlist(ctx, primitive.NewObjectID().Hex(), "Someone else's")
+	other := primitive.NewObjectID().Hex()
+	_, err = CreateWishlist(ctx, other, "Someone else's", other)
 	assert.NoError(suite.T(), err)
 
 	wls, err := ListWishlistsByUser(ctx, userID)
@@ -43,7 +46,8 @@ func (suite *WishlistTestSuite) TestListWishlistsByUser() {
 
 func (suite *WishlistTestSuite) TestCreateWishlistRejectsEmptyName() {
 	ctx := context.Background()
-	wl, err := CreateWishlist(ctx, primitive.NewObjectID().Hex(), "")
+	u := primitive.NewObjectID().Hex()
+	wl, err := CreateWishlist(ctx, u, "", u)
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), wl)
 }
@@ -52,38 +56,81 @@ func (suite *WishlistTestSuite) TestCreateWishlistPersists() {
 	ctx := context.Background()
 	userID := primitive.NewObjectID().Hex()
 
-	wl, err := CreateWishlist(ctx, userID, "Someday")
+	wl, err := CreateWishlist(ctx, userID, "Someday", userID)
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), wl)
 	assert.Equal(suite.T(), "Someday", wl.Name)
 	assert.Equal(suite.T(), models.VisibilityPrivate, wl.Visibility)
 
+	// create stamps all four audit fields; created_at == updated_at on a fresh record
+	assert.False(suite.T(), wl.CreatedAt.IsZero())
+	assert.Equal(suite.T(), userID, wl.CreatedBy)
+	assert.Equal(suite.T(), userID, wl.UpdatedBy)
+	assert.Equal(suite.T(), wl.CreatedAt, wl.UpdatedAt)
+	assert.Nil(suite.T(), wl.DeletedAt)
+
 	got, err := GetWishlist(ctx, wl.ID)
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), got)
 	assert.Equal(suite.T(), "Someday", got.Name)
+	assert.False(suite.T(), got.CreatedAt.IsZero())
+	assert.Equal(suite.T(), userID, got.CreatedBy)
 }
 
-func (suite *WishlistTestSuite) TestDeleteWishlistRemovesOnlyTargeted() {
+func (suite *WishlistTestSuite) TestUpdateWishlistAdvancesUpdateStampOnly() {
 	ctx := context.Background()
 	userID := primitive.NewObjectID().Hex()
 
-	keep, err := CreateWishlist(ctx, userID, "Keep me")
-	assert.NoError(suite.T(), err)
-	remove, err := CreateWishlist(ctx, userID, "Remove me")
+	wl, err := CreateWishlist(ctx, userID, "Someday", userID)
 	assert.NoError(suite.T(), err)
 
-	deleted, err := DeleteWishlist(ctx, remove.ID, userID)
+	// baseline from the persisted record (post DB round-trip: UTC, millisecond precision)
+	base, err := GetWishlist(ctx, wl.ID)
+	assert.NoError(suite.T(), err)
+
+	editor := primitive.NewObjectID().Hex()
+	time.Sleep(5 * time.Millisecond)
+	updated, err := SetWishlistVisibility(ctx, wl.ID, userID, models.VisibilityPublic, editor)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), base.CreatedAt.Equal(updated.CreatedAt), "created_at unchanged by update")
+	assert.Equal(suite.T(), userID, updated.CreatedBy)
+	assert.Equal(suite.T(), editor, updated.UpdatedBy)
+	assert.True(suite.T(), updated.UpdatedAt.After(base.UpdatedAt), "updated_at advanced")
+}
+
+func (suite *WishlistTestSuite) TestDeleteWishlistIsSoftAndTargeted() {
+	ctx := context.Background()
+	userID := primitive.NewObjectID().Hex()
+
+	keep, err := CreateWishlist(ctx, userID, "Keep me", userID)
+	assert.NoError(suite.T(), err)
+	remove, err := CreateWishlist(ctx, userID, "Remove me", userID)
+	assert.NoError(suite.T(), err)
+
+	deleted, err := DeleteWishlist(ctx, remove.ID, userID, userID)
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), deleted)
 
+	// absent from every read path
 	got, err := GetWishlist(ctx, remove.ID)
 	assert.NoError(suite.T(), err)
 	assert.Nil(suite.T(), got)
-
-	stillThere, err := GetWishlist(ctx, keep.ID)
+	list, err := ListWishlistsByUser(ctx, userID)
 	assert.NoError(suite.T(), err)
-	assert.NotNil(suite.T(), stillThere)
+	assert.Len(suite.T(), list, 1)
+	assert.Equal(suite.T(), keep.ID, list[0].ID)
+
+	// but the document still exists, with the delete stamp set
+	var raw bson.M
+	err = database.Db.Collection(wishlistCollection).FindOne(ctx, bson.D{{Key: "_id", Value: remove.ID}}).Decode(&raw)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), raw["deleted_at"])
+	assert.Equal(suite.T(), userID, raw["deleted_by"])
+
+	// re-deleting a soft-deleted wishlist reports nothing changed
+	again, err := DeleteWishlist(ctx, remove.ID, userID, userID)
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), again)
 }
 
 func (suite *WishlistTestSuite) TestDeleteWishlistRejectsNonOwner() {
@@ -91,10 +138,10 @@ func (suite *WishlistTestSuite) TestDeleteWishlistRejectsNonOwner() {
 	owner := primitive.NewObjectID().Hex()
 	intruder := primitive.NewObjectID().Hex()
 
-	wl, err := CreateWishlist(ctx, owner, "Mine")
+	wl, err := CreateWishlist(ctx, owner, "Mine", owner)
 	assert.NoError(suite.T(), err)
 
-	deleted, err := DeleteWishlist(ctx, wl.ID, intruder)
+	deleted, err := DeleteWishlist(ctx, wl.ID, intruder, intruder)
 	assert.NoError(suite.T(), err)
 	assert.False(suite.T(), deleted)
 
@@ -107,12 +154,12 @@ func (suite *WishlistTestSuite) TestEntryAndVisibilityScopedToWishlistID() {
 	ctx := context.Background()
 	userID := primitive.NewObjectID().Hex()
 
-	a, err := CreateWishlist(ctx, userID, "A")
+	a, err := CreateWishlist(ctx, userID, "A", userID)
 	assert.NoError(suite.T(), err)
-	b, err := CreateWishlist(ctx, userID, "B")
+	b, err := CreateWishlist(ctx, userID, "B", userID)
 	assert.NoError(suite.T(), err)
 
-	updated, err := AddWishlistEntry(ctx, a.ID, userID, "vol-1")
+	updated, err := AddWishlistEntry(ctx, a.ID, userID, "vol-1", userID)
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), updated.Entries, 1)
 
@@ -120,7 +167,7 @@ func (suite *WishlistTestSuite) TestEntryAndVisibilityScopedToWishlistID() {
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), untouched.Entries, 0)
 
-	updated, err = SetWishlistVisibility(ctx, a.ID, userID, models.VisibilityPublic)
+	updated, err = SetWishlistVisibility(ctx, a.ID, userID, models.VisibilityPublic, userID)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), models.VisibilityPublic, updated.Visibility)
 
@@ -128,7 +175,7 @@ func (suite *WishlistTestSuite) TestEntryAndVisibilityScopedToWishlistID() {
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), models.VisibilityPrivate, untouched.Visibility)
 
-	updated, err = RemoveWishlistEntry(ctx, a.ID, userID, "vol-1")
+	updated, err = RemoveWishlistEntry(ctx, a.ID, userID, "vol-1", userID)
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), updated.Entries, 0)
 }
@@ -138,14 +185,14 @@ func (suite *WishlistTestSuite) TestEntryMutatorsRejectNonOwner() {
 	owner := primitive.NewObjectID().Hex()
 	intruder := primitive.NewObjectID().Hex()
 
-	wl, err := CreateWishlist(ctx, owner, "Mine")
+	wl, err := CreateWishlist(ctx, owner, "Mine", owner)
 	assert.NoError(suite.T(), err)
 
-	got, err := AddWishlistEntry(ctx, wl.ID, intruder, "vol-1")
+	got, err := AddWishlistEntry(ctx, wl.ID, intruder, "vol-1", intruder)
 	assert.NoError(suite.T(), err)
 	assert.Nil(suite.T(), got)
 
-	got, err = SetWishlistVisibility(ctx, wl.ID, intruder, models.VisibilityPublic)
+	got, err = SetWishlistVisibility(ctx, wl.ID, intruder, models.VisibilityPublic, intruder)
 	assert.NoError(suite.T(), err)
 	assert.Nil(suite.T(), got)
 
@@ -153,6 +200,23 @@ func (suite *WishlistTestSuite) TestEntryMutatorsRejectNonOwner() {
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), models.VisibilityPrivate, untouched.Visibility)
 	assert.Len(suite.T(), untouched.Entries, 0)
+}
+
+func (suite *WishlistTestSuite) TestWishlistToVOCarriesAuditFields() {
+	ctx := context.Background()
+	userID := primitive.NewObjectID().Hex()
+
+	wl, err := CreateWishlist(ctx, userID, "VO check", userID)
+	assert.NoError(suite.T(), err)
+
+	got, err := GetWishlist(ctx, wl.ID)
+	assert.NoError(suite.T(), err)
+	vo := WishlistToVO(got, userID, false, false)
+	assert.NotNil(suite.T(), vo)
+	assert.Equal(suite.T(), got.CreatedAt, vo.CreatedAt)
+	assert.Equal(suite.T(), got.UpdatedAt, vo.UpdatedAt)
+	assert.Equal(suite.T(), userID, vo.CreatedBy)
+	assert.Equal(suite.T(), userID, vo.UpdatedBy)
 }
 
 func TestWishlistTestSuite(t *testing.T) {

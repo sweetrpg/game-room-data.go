@@ -39,7 +39,8 @@ func (suite *MigrationTestSuite) TestMigrateWishlistNamesBackfillsUnnamed() {
 	_, err := database.Insert(wishlistCollection, unnamed)
 	assert.NoError(suite.T(), err)
 
-	alreadyNamed, err := CreateWishlist(ctx, primitive.NewObjectID().Hex(), "Already named")
+	namer := primitive.NewObjectID().Hex()
+	alreadyNamed, err := CreateWishlist(ctx, namer, "Already named", namer)
 	assert.NoError(suite.T(), err)
 
 	modified, err := MigrateWishlistNames(ctx)

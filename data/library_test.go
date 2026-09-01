@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
@@ -27,25 +28,31 @@ func (suite *LibraryTestSuite) TestAddLibraryEntryPersistsTitle() {
 	ctx := context.Background()
 	userID := primitive.NewObjectID().Hex()
 
-	lib, err := AddLibraryEntry(ctx, userID, "vol-1", "Maus I")
+	lib, err := AddLibraryEntry(ctx, userID, "vol-1", "Maus I", userID)
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), lib)
 	assert.Equal(suite.T(), "vol-1", lib.Entries[0].VolumeID)
 	assert.Equal(suite.T(), "Maus I", lib.Entries[0].VolumeTitle)
 
+	// the auto-created library carries a full create stamp
+	assert.False(suite.T(), lib.CreatedAt.IsZero())
+	assert.Equal(suite.T(), userID, lib.CreatedBy)
+	assert.Equal(suite.T(), userID, lib.UpdatedBy)
+
 	read, err := GetLibraryByUser(ctx, userID)
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), read.Entries, 1)
 	assert.Equal(suite.T(), "Maus I", read.Entries[0].VolumeTitle)
+	assert.False(suite.T(), read.CreatedAt.IsZero())
 }
 
 func (suite *LibraryTestSuite) TestAddLibraryEntryIsIdempotent() {
 	ctx := context.Background()
 	userID := primitive.NewObjectID().Hex()
 
-	_, err := AddLibraryEntry(ctx, userID, "vol-1", "First")
+	_, err := AddLibraryEntry(ctx, userID, "vol-1", "First", userID)
 	assert.NoError(suite.T(), err)
-	lib, err := AddLibraryEntry(ctx, userID, "vol-1", "Second")
+	lib, err := AddLibraryEntry(ctx, userID, "vol-1", "Second", userID)
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), lib.Entries, 1)
 	assert.Equal(suite.T(), "First", lib.Entries[0].VolumeTitle)
@@ -55,10 +62,10 @@ func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitle() {
 	ctx := context.Background()
 	userID := primitive.NewObjectID().Hex()
 
-	_, err := AddLibraryEntry(ctx, userID, "vol-1", "Old Title")
+	_, err := AddLibraryEntry(ctx, userID, "vol-1", "Old Title", userID)
 	assert.NoError(suite.T(), err)
 
-	lib, err := UpdateLibraryEntryTitle(ctx, userID, "vol-1", "New Title")
+	lib, err := UpdateLibraryEntryTitle(ctx, userID, "vol-1", "New Title", userID)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), "New Title", lib.Entries[0].VolumeTitle)
 
@@ -71,19 +78,39 @@ func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleNotFound() {
 	ctx := context.Background()
 	userID := primitive.NewObjectID().Hex()
 
-	_, err := AddLibraryEntry(ctx, userID, "vol-1", "Maus I")
+	_, err := AddLibraryEntry(ctx, userID, "vol-1", "Maus I", userID)
 	assert.NoError(suite.T(), err)
 
-	lib, err := UpdateLibraryEntryTitle(ctx, userID, "vol-999", "Nope")
+	lib, err := UpdateLibraryEntryTitle(ctx, userID, "vol-999", "Nope", userID)
 	assert.ErrorIs(suite.T(), err, ErrLibraryEntryNotFound)
 	assert.Nil(suite.T(), lib)
 }
 
-func (suite *LibraryTestSuite) TestLibraryToVOCarriesTitle() {
+func (suite *LibraryTestSuite) TestLibraryUpdateAdvancesUpdateStampOnly() {
 	ctx := context.Background()
 	userID := primitive.NewObjectID().Hex()
 
-	_, err := AddLibraryEntry(ctx, userID, "vol-1", "Persepolis")
+	_, err := AddLibraryEntry(ctx, userID, "vol-1", "Old Title", userID)
+	assert.NoError(suite.T(), err)
+
+	base, err := GetLibraryByUser(ctx, userID)
+	assert.NoError(suite.T(), err)
+
+	editor := primitive.NewObjectID().Hex()
+	time.Sleep(5 * time.Millisecond)
+	updated, err := UpdateLibraryEntryTitle(ctx, userID, "vol-1", "New Title", editor)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), base.CreatedAt.Equal(updated.CreatedAt), "created_at unchanged by update")
+	assert.Equal(suite.T(), userID, updated.CreatedBy)
+	assert.Equal(suite.T(), editor, updated.UpdatedBy)
+	assert.True(suite.T(), updated.UpdatedAt.After(base.UpdatedAt), "updated_at advanced")
+}
+
+func (suite *LibraryTestSuite) TestLibraryToVOCarriesTitleAndAuditFields() {
+	ctx := context.Background()
+	userID := primitive.NewObjectID().Hex()
+
+	_, err := AddLibraryEntry(ctx, userID, "vol-1", "Persepolis", userID)
 	assert.NoError(suite.T(), err)
 
 	lib, err := GetLibraryByUser(ctx, userID)
@@ -92,6 +119,9 @@ func (suite *LibraryTestSuite) TestLibraryToVOCarriesTitle() {
 	assert.Len(suite.T(), vo.Entries, 1)
 	assert.Equal(suite.T(), "vol-1", vo.Entries[0].VolumeID)
 	assert.Equal(suite.T(), "Persepolis", vo.Entries[0].VolumeTitle)
+	assert.Equal(suite.T(), lib.CreatedAt, vo.CreatedAt)
+	assert.Equal(suite.T(), lib.UpdatedAt, vo.UpdatedAt)
+	assert.Equal(suite.T(), userID, vo.CreatedBy)
 }
 
 func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleByVolume() {
@@ -105,11 +135,11 @@ func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleByVolume() {
 		primitive.NewObjectID().Hex(),
 	}
 	for _, uid := range changed {
-		_, err := AddLibraryEntry(ctx, uid, target, "Old Title")
+		_, err := AddLibraryEntry(ctx, uid, target, "Old Title", uid)
 		assert.NoError(suite.T(), err)
 	}
 	untouched := primitive.NewObjectID().Hex()
-	_, err := AddLibraryEntry(ctx, untouched, other, "Keep Me")
+	_, err := AddLibraryEntry(ctx, untouched, other, "Keep Me", untouched)
 	assert.NoError(suite.T(), err)
 
 	got, err := UpdateLibraryEntryTitleByVolume(ctx, target, "New Title")
@@ -120,6 +150,8 @@ func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleByVolume() {
 		lib, err := GetLibraryByUser(ctx, uid)
 		assert.NoError(suite.T(), err)
 		assert.Equal(suite.T(), "New Title", lib.Entries[0].VolumeTitle)
+		// event-driven refresh stamps the system actor, not a user
+		assert.Equal(suite.T(), SystemActor, lib.UpdatedBy)
 	}
 	otherLib, err := GetLibraryByUser(ctx, untouched)
 	assert.NoError(suite.T(), err)
