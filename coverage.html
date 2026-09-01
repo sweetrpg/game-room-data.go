@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/sweetrpg/game-room-data.go/data/library.go (50.6%)</option>
+				<option value="file0">github.com/sweetrpg/game-room-data.go/data/library.go (53.6%)</option>
 				
 				<option value="file1">github.com/sweetrpg/game-room-data.go/data/migration.go (75.0%)</option>
 				
@@ -99,69 +99,70 @@ import (
         "github.com/sweetrpg/mongodb.go/database"
         "go.mongodb.org/mongo-driver/bson"
         "go.mongodb.org/mongo-driver/bson/primitive"
+        "go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // GetLibraryByUser returns the given user's library, or nil if they don't have one yet.
-func GetLibraryByUser(c context.Context, userID string) (*models.Library, error) <span class="cov10" title="11">{
+func GetLibraryByUser(c context.Context, userID string) (*models.Library, error) <span class="cov10" title="19">{
         results, err := database.Query[models.Library](libraryCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for library", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov10" title="11">if len(results) == 0 </span><span class="cov7" title="5">{
+        <span class="cov10" title="19">if len(results) == 0 </span><span class="cov7" title="9">{
                 return nil, nil
         }</span>
-        <span class="cov7" title="6">return results[0], nil</span>
+        <span class="cov8" title="10">return results[0], nil</span>
 }
 
 // getOrCreateLibrary returns the user's library, creating one (defaulting to private) if none
 // exists yet, per the "new library defaults to private" requirement.
-func getOrCreateLibrary(c context.Context, userID string) (*models.Library, error) <span class="cov7" title="6">{
+func getOrCreateLibrary(c context.Context, userID string) (*models.Library, error) <span class="cov8" title="10">{
         lib, err := GetLibraryByUser(c, userID)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov7" title="6">if lib != nil </span><span class="cov1" title="1">{
+        <span class="cov8" title="10">if lib != nil </span><span class="cov1" title="1">{
                 return lib, nil
         }</span>
 
-        <span class="cov7" title="5">newLib := models.NewLibrary(primitive.NewObjectID().Hex(), userID)
+        <span class="cov7" title="9">newLib := models.NewLibrary(primitive.NewObjectID().Hex(), userID)
         newLib.CreatedAt = time.Now()
         newLib.CreatedBy = userID
         if _, err := database.Insert(libraryCollection, newLib); err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while inserting library", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov7" title="5">return &amp;newLib, nil</span>
+        <span class="cov7" title="9">return &amp;newLib, nil</span>
 }
 
-func replaceLibrary(c context.Context, lib *models.Library) error <span class="cov7" title="6">{
+func replaceLibrary(c context.Context, lib *models.Library) error <span class="cov8" title="10">{
         lib.UpdatedAt = time.Now()
         _, err := database.Db.Collection(libraryCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: lib.ID}}, lib)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while replacing library", "id", lib.ID, "error", err)
         }</span>
-        <span class="cov7" title="6">return err</span>
+        <span class="cov8" title="10">return err</span>
 }
 
 // AddLibraryEntry links a catalog volume into the user's library, creating the library if it
 // doesn't exist yet. A no-op if the volume is already present. volumeTitle is a denormalized
 // snapshot of the volume's title at add time so entries can be displayed without a catalog lookup.
-func AddLibraryEntry(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) <span class="cov7" title="6">{
+func AddLibraryEntry(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) <span class="cov8" title="10">{
         lib, err := getOrCreateLibrary(c, userID)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov7" title="6">for _, e := range lib.Entries </span><span class="cov1" title="1">{
+        <span class="cov8" title="10">for _, e := range lib.Entries </span><span class="cov1" title="1">{
                 if e.VolumeID == volumeID </span><span class="cov1" title="1">{
                         return lib, nil
                 }</span>
         }
-        <span class="cov7" title="5">lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now(), VolumeTitle: volumeTitle})
+        <span class="cov7" title="9">lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now(), VolumeTitle: volumeTitle})
         if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov7" title="5">return lib, nil</span>
+        <span class="cov7" title="9">return lib, nil</span>
 }
 
 // RemoveLibraryEntry unlinks a catalog volume from the user's library.
@@ -235,6 +236,49 @@ func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle st
                 }
         }
         <span class="cov1" title="1">return nil, ErrLibraryEntryNotFound</span>
+}
+
+// UpdateLibraryEntryTitleByVolume refreshes the denormalized volume-title snapshot on every
+// library entry across all users that references volumeID, in one bulk update, and returns the
+// IDs of the users whose libraries actually changed. This is driven by a trusted catalog
+// volume.updated event, not a user request, so it deliberately spans all owners - owner-scoping
+// applies to user-initiated access, not to this event-driven denormalization refresh. Idempotent:
+// a replay with an unchanged title matches no entries and returns an empty slice.
+func UpdateLibraryEntryTitleByVolume(c context.Context, volumeID, volumeTitle string) ([]string, error) <span class="cov4" title="3">{
+        stale, err := database.Query[models.Library](libraryCollection, bson.D{
+                {Key: "entries", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
+                        {Key: "volume_id", Value: volumeID},
+                        {Key: "volume_title", Value: bson.D{{Key: "$ne", Value: volumeTitle}}},
+                }}}},
+        }, nil, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying libraries for volume title sync", "volumeID", volumeID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov4" title="3">if len(stale) == 0 </span><span class="cov3" title="2">{
+                return []string{}, nil
+        }</span>
+
+        <span class="cov1" title="1">userIDs := make([]string, 0, len(stale))
+        for _, lib := range stale </span><span class="cov4" title="3">{
+                userIDs = append(userIDs, lib.UserID)
+        }</span>
+
+        <span class="cov1" title="1">_, err = database.Db.Collection(libraryCollection).UpdateMany(c,
+                bson.D{{Key: "entries.volume_id", Value: volumeID}},
+                bson.D{{Key: "$set", Value: bson.D{
+                        {Key: "entries.$[e].volume_title", Value: volumeTitle},
+                        {Key: "updated_at", Value: time.Now()},
+                }}},
+                options.Update().SetArrayFilters(options.ArrayFilters{
+                        Filters: []interface{}{bson.D{{Key: "e.volume_id", Value: volumeID}}},
+                }),
+        )
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while bulk-updating library entry titles", "volumeID", volumeID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov1" title="1">return userIDs, nil</span>
 }
 
 // LibraryToVO converts a library model, filtered to what viewerID may see, into its VO. ownerID
