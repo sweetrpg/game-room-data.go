@@ -40,10 +40,14 @@ func auditVO(a modelcore.Auditable) modelcorevo.AuditableVO {
 	}
 }
 
-// live appends the soft-delete exclusion to a query filter. {deleted_at: nil} matches both an
-// absent field (docs not yet backfilled) and an explicit null (live docs post-backfill).
+// live returns a copy of the query filter with the soft-delete exclusion appended.
+// {deleted_at: nil} matches both an absent field (docs not yet backfilled) and an explicit null
+// (live docs post-backfill). It copies rather than appending in place so a caller's slice is
+// never aliased or mutated.
 func live(filter bson.D) bson.D {
-	return append(filter, bson.E{Key: "deleted_at", Value: nil})
+	out := make(bson.D, len(filter), len(filter)+1)
+	copy(out, filter)
+	return append(out, bson.E{Key: "deleted_at", Value: nil})
 }
 
 // softDeleteSet is the $set document for a soft delete: marks the record deleted and advances
