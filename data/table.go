@@ -12,11 +12,11 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// GetTable returns one table by ID, or nil if it doesn't exist. Unscoped by owner - only for
-// read paths, which apply visibility filtering separately via TableToVO/CanView. Write paths
-// must use getOwnedTable instead.
+// GetTable returns one table by ID, or nil if it doesn't exist or has been soft-deleted.
+// Unscoped by owner - only for read paths, which apply visibility filtering separately via
+// TableToVO/CanView. Write paths must use getOwnedTable instead.
 func GetTable(c context.Context, id string) (*models.Table, error) {
-	results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
+	results, err := database.Query[models.Table](tableCollection, live(bson.D{{Key: "_id", Value: id}}), nil, nil, 0, 1)
 	if err != nil {
 		logging.Logger.Error("Error while querying database for table", "id", id, "error", err)
 		return nil, err
@@ -27,12 +27,12 @@ func GetTable(c context.Context, id string) (*models.Table, error) {
 	return results[0], nil
 }
 
-// getOwnedTable returns the table only if it exists and is owned by ownerUserID, via a single
-// query filtered on both fields. Returns (nil, nil) both when the table doesn't exist and when
-// it's owned by someone else - callers needing to tell those apart (to choose between a 403 and
-// a 404 response) should follow up with GetTable.
+// getOwnedTable returns the table only if it exists, is not soft-deleted, and is owned by
+// ownerUserID, via a single query filtered on both fields. Returns (nil, nil) both when the table
+// doesn't exist and when it's owned by someone else - callers needing to tell those apart (to
+// choose between a 403 and a 404 response) should follow up with GetTable.
 func getOwnedTable(c context.Context, id, ownerUserID string) (*models.Table, error) {
-	results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}, nil, nil, 0, 1)
+	results, err := database.Query[models.Table](tableCollection, live(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}), nil, nil, 0, 1)
 	if err != nil {
 		logging.Logger.Error("Error while querying database for owned table", "id", id, "ownerUserID", ownerUserID, "error", err)
 		return nil, err
@@ -43,9 +43,9 @@ func getOwnedTable(c context.Context, id, ownerUserID string) (*models.Table, er
 	return results[0], nil
 }
 
-// ListTablesByUser returns every table owned by the given user.
+// ListTablesByUser returns every live table owned by the given user.
 func ListTablesByUser(c context.Context, userID string) ([]*models.Table, error) {
-	results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 0)
+	results, err := database.Query[models.Table](tableCollection, live(bson.D{{Key: "user_id", Value: userID}}), nil, nil, 0, 0)
 	if err != nil {
 		logging.Logger.Error("Error while querying database for tables", "userID", userID, "error", err)
 		return nil, err
@@ -54,11 +54,10 @@ func ListTablesByUser(c context.Context, userID string) ([]*models.Table, error)
 }
 
 // CreateTable creates a new table, defaulting to private visibility per the "new tables default
-// to private" requirement.
-func CreateTable(c context.Context, userID, name string) (*models.Table, error) {
+// to private" requirement. actingUserID is the caller stamped into the audit fields.
+func CreateTable(c context.Context, userID, name, actingUserID string) (*models.Table, error) {
 	tbl := models.NewTable(primitive.NewObjectID().Hex(), userID, name)
-	tbl.CreatedAt = time.Now()
-	tbl.CreatedBy = userID
+	stampCreate(&tbl.Auditable, actingUserID, time.Now())
 	if _, err := database.Insert(tableCollection, tbl); err != nil {
 		logging.Logger.Error("Error while inserting table", "userID", userID, "error", err)
 		return nil, err
@@ -66,9 +65,9 @@ func CreateTable(c context.Context, userID, name string) (*models.Table, error) 
 	return &tbl, nil
 }
 
-func replaceTable(c context.Context, tbl *models.Table) error {
-	tbl.UpdatedAt = time.Now()
-	_, err := database.Db.Collection(tableCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: tbl.ID}, {Key: "user_id", Value: tbl.UserID}}, tbl)
+func replaceTable(c context.Context, tbl *models.Table, actingUserID string) error {
+	stampUpdate(&tbl.Auditable, actingUserID, time.Now())
+	_, err := database.Db.Collection(tableCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: tbl.ID}, {Key: "user_id", Value: tbl.UserID}}), tbl)
 	if err != nil {
 		logging.Logger.Error("Error while replacing table", "id", tbl.ID, "error", err)
 	}
@@ -76,26 +75,26 @@ func replaceTable(c context.Context, tbl *models.Table) error {
 }
 
 // UpdateTableName renames a table owned by ownerUserID.
-func UpdateTableName(c context.Context, id, ownerUserID, name string) (*models.Table, error) {
+func UpdateTableName(c context.Context, id, ownerUserID, name, actingUserID string) (*models.Table, error) {
 	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
 		return tbl, err
 	}
 	tbl.Name = name
-	if err := replaceTable(c, tbl); err != nil {
+	if err := replaceTable(c, tbl, actingUserID); err != nil {
 		return nil, err
 	}
 	return tbl, nil
 }
 
 // SetTableVisibility updates the visibility of a table owned by ownerUserID.
-func SetTableVisibility(c context.Context, id, ownerUserID string, visibility models.Visibility) (*models.Table, error) {
+func SetTableVisibility(c context.Context, id, ownerUserID string, visibility models.Visibility, actingUserID string) (*models.Table, error) {
 	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
 		return tbl, err
 	}
 	tbl.Visibility = visibility
-	if err := replaceTable(c, tbl); err != nil {
+	if err := replaceTable(c, tbl, actingUserID); err != nil {
 		return nil, err
 	}
 	return tbl, nil
@@ -103,7 +102,7 @@ func SetTableVisibility(c context.Context, id, ownerUserID string, visibility mo
 
 // AddTableVolume links a catalog volume into a table owned by ownerUserID. A no-op if already
 // present.
-func AddTableVolume(c context.Context, id, ownerUserID, volumeID string) (*models.Table, error) {
+func AddTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID string) (*models.Table, error) {
 	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
 		return tbl, err
@@ -114,14 +113,14 @@ func AddTableVolume(c context.Context, id, ownerUserID, volumeID string) (*model
 		}
 	}
 	tbl.VolumeIDs = append(tbl.VolumeIDs, volumeID)
-	if err := replaceTable(c, tbl); err != nil {
+	if err := replaceTable(c, tbl, actingUserID); err != nil {
 		return nil, err
 	}
 	return tbl, nil
 }
 
 // RemoveTableVolume unlinks a catalog volume from a table owned by ownerUserID.
-func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID string) (*models.Table, error) {
+func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID string) (*models.Table, error) {
 	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
 		return tbl, err
@@ -133,21 +132,25 @@ func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID string) (*mo
 		}
 	}
 	tbl.VolumeIDs = kept
-	if err := replaceTable(c, tbl); err != nil {
+	if err := replaceTable(c, tbl, actingUserID); err != nil {
 		return nil, err
 	}
 	return tbl, nil
 }
 
-// DeleteTable removes a table owned by ownerUserID. Returns whether a document was actually
-// deleted, so callers can tell "not found" apart from "found but not owned by ownerUserID".
-func DeleteTable(c context.Context, id, ownerUserID string) (bool, error) {
-	result, err := database.Db.Collection(tableCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}})
+// DeleteTable soft-deletes a table owned by ownerUserID: it sets deleted_at/deleted_by via $set
+// rather than removing the document. Returns whether a live document was actually marked, so
+// callers can tell "not found" (or already deleted) apart from "found but not owned by
+// ownerUserID".
+func DeleteTable(c context.Context, id, ownerUserID, actingUserID string) (bool, error) {
+	result, err := database.Db.Collection(tableCollection).UpdateOne(c,
+		live(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}),
+		softDeleteSet(actingUserID, time.Now()))
 	if err != nil {
 		logging.Logger.Error("Error while deleting table", "id", id, "error", err)
 		return false, err
 	}
-	return result.DeletedCount > 0, nil
+	return result.ModifiedCount > 0, nil
 }
 
 // TableToVO converts a table model into its VO, or nil if viewerID may not see it at all.
@@ -157,10 +160,11 @@ func TableToVO(tbl *models.Table, viewerID string, isFriend, isFriendOfFriend bo
 	}
 
 	return &vo.TableVO{
-		ID:         tbl.ID,
-		UserID:     tbl.UserID,
-		Name:       tbl.Name,
-		VolumeIDs:  tbl.VolumeIDs,
-		Visibility: string(tbl.Visibility),
+		ID:          tbl.ID,
+		UserID:      tbl.UserID,
+		Name:        tbl.Name,
+		VolumeIDs:   tbl.VolumeIDs,
+		Visibility:  string(tbl.Visibility),
+		AuditableVO: auditVO(tbl.Auditable),
 	}
 }

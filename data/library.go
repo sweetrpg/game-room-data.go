@@ -14,9 +14,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// GetLibraryByUser returns the given user's library, or nil if they don't have one yet.
+// GetLibraryByUser returns the given user's library, or nil if they don't have one yet or it has
+// been soft-deleted.
 func GetLibraryByUser(c context.Context, userID string) (*models.Library, error) {
-	results, err := database.Query[models.Library](libraryCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 1)
+	results, err := database.Query[models.Library](libraryCollection, live(bson.D{{Key: "user_id", Value: userID}}), nil, nil, 0, 1)
 	if err != nil {
 		logging.Logger.Error("Error while querying database for library", "userID", userID, "error", err)
 		return nil, err
@@ -28,8 +29,9 @@ func GetLibraryByUser(c context.Context, userID string) (*models.Library, error)
 }
 
 // getOrCreateLibrary returns the user's library, creating one (defaulting to private) if none
-// exists yet, per the "new library defaults to private" requirement.
-func getOrCreateLibrary(c context.Context, userID string) (*models.Library, error) {
+// exists yet, per the "new library defaults to private" requirement. actingUserID is stamped
+// into the audit fields of a newly created library.
+func getOrCreateLibrary(c context.Context, userID, actingUserID string) (*models.Library, error) {
 	lib, err := GetLibraryByUser(c, userID)
 	if err != nil {
 		return nil, err
@@ -39,8 +41,7 @@ func getOrCreateLibrary(c context.Context, userID string) (*models.Library, erro
 	}
 
 	newLib := models.NewLibrary(primitive.NewObjectID().Hex(), userID)
-	newLib.CreatedAt = time.Now()
-	newLib.CreatedBy = userID
+	stampCreate(&newLib.Auditable, actingUserID, time.Now())
 	if _, err := database.Insert(libraryCollection, newLib); err != nil {
 		logging.Logger.Error("Error while inserting library", "userID", userID, "error", err)
 		return nil, err
@@ -48,9 +49,9 @@ func getOrCreateLibrary(c context.Context, userID string) (*models.Library, erro
 	return &newLib, nil
 }
 
-func replaceLibrary(c context.Context, lib *models.Library) error {
-	lib.UpdatedAt = time.Now()
-	_, err := database.Db.Collection(libraryCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: lib.ID}}, lib)
+func replaceLibrary(c context.Context, lib *models.Library, actingUserID string) error {
+	stampUpdate(&lib.Auditable, actingUserID, time.Now())
+	_, err := database.Db.Collection(libraryCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: lib.ID}}), lib)
 	if err != nil {
 		logging.Logger.Error("Error while replacing library", "id", lib.ID, "error", err)
 	}
@@ -59,9 +60,10 @@ func replaceLibrary(c context.Context, lib *models.Library) error {
 
 // AddLibraryEntry links a catalog volume into the user's library, creating the library if it
 // doesn't exist yet. A no-op if the volume is already present. volumeTitle is a denormalized
-// snapshot of the volume's title at add time so entries can be displayed without a catalog lookup.
-func AddLibraryEntry(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) {
-	lib, err := getOrCreateLibrary(c, userID)
+// snapshot of the volume's title at add time so entries can be displayed without a catalog
+// lookup.
+func AddLibraryEntry(c context.Context, userID, volumeID, volumeTitle, actingUserID string) (*models.Library, error) {
+	lib, err := getOrCreateLibrary(c, userID, actingUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,14 +73,14 @@ func AddLibraryEntry(c context.Context, userID, volumeID, volumeTitle string) (*
 		}
 	}
 	lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now(), VolumeTitle: volumeTitle})
-	if err := replaceLibrary(c, lib); err != nil {
+	if err := replaceLibrary(c, lib, actingUserID); err != nil {
 		return nil, err
 	}
 	return lib, nil
 }
 
 // RemoveLibraryEntry unlinks a catalog volume from the user's library.
-func RemoveLibraryEntry(c context.Context, userID, volumeID string) (*models.Library, error) {
+func RemoveLibraryEntry(c context.Context, userID, volumeID, actingUserID string) (*models.Library, error) {
 	lib, err := GetLibraryByUser(c, userID)
 	if err != nil || lib == nil {
 		return lib, err
@@ -90,7 +92,7 @@ func RemoveLibraryEntry(c context.Context, userID, volumeID string) (*models.Lib
 		}
 	}
 	lib.Entries = kept
-	if err := replaceLibrary(c, lib); err != nil {
+	if err := replaceLibrary(c, lib, actingUserID); err != nil {
 		return nil, err
 	}
 	return lib, nil
@@ -98,13 +100,13 @@ func RemoveLibraryEntry(c context.Context, userID, volumeID string) (*models.Lib
 
 // SetLibraryDefaultVisibility updates the library's default visibility, creating the library
 // (private default) first if the user doesn't have one yet.
-func SetLibraryDefaultVisibility(c context.Context, userID string, newDefault models.Visibility) (*models.Library, error) {
-	lib, err := getOrCreateLibrary(c, userID)
+func SetLibraryDefaultVisibility(c context.Context, userID string, newDefault models.Visibility, actingUserID string) (*models.Library, error) {
+	lib, err := getOrCreateLibrary(c, userID, actingUserID)
 	if err != nil {
 		return nil, err
 	}
 	lib.DefaultVisibility = newDefault
-	if err := replaceLibrary(c, lib); err != nil {
+	if err := replaceLibrary(c, lib, actingUserID); err != nil {
 		return nil, err
 	}
 	return lib, nil
@@ -112,7 +114,7 @@ func SetLibraryDefaultVisibility(c context.Context, userID string, newDefault mo
 
 // SetLibraryEntryVisibilityOverride sets or clears (override == nil) one entry's per-entry
 // visibility override.
-func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID string, override *models.Visibility) (*models.Library, error) {
+func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID string, override *models.Visibility, actingUserID string) (*models.Library, error) {
 	lib, err := GetLibraryByUser(c, userID)
 	if err != nil || lib == nil {
 		return lib, err
@@ -123,7 +125,7 @@ func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID strin
 			break
 		}
 	}
-	if err := replaceLibrary(c, lib); err != nil {
+	if err := replaceLibrary(c, lib, actingUserID); err != nil {
 		return nil, err
 	}
 	return lib, nil
@@ -133,7 +135,7 @@ func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID strin
 var ErrLibraryEntryNotFound = errors.New("library entry not found")
 
 // UpdateLibraryEntryTitle refreshes the denormalized title snapshot on a single library entry.
-func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) {
+func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle, actingUserID string) (*models.Library, error) {
 	lib, err := GetLibraryByUser(c, userID)
 	if err != nil || lib == nil {
 		return lib, err
@@ -141,7 +143,7 @@ func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle st
 	for i, e := range lib.Entries {
 		if e.VolumeID == volumeID {
 			lib.Entries[i].VolumeTitle = volumeTitle
-			if err := replaceLibrary(c, lib); err != nil {
+			if err := replaceLibrary(c, lib, actingUserID); err != nil {
 				return nil, err
 			}
 			return lib, nil
@@ -216,5 +218,6 @@ func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFrien
 		UserID:            lib.UserID,
 		DefaultVisibility: string(lib.DefaultVisibility),
 		Entries:           entries,
+		AuditableVO:       auditVO(lib.Auditable),
 	}
 }
