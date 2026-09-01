@@ -94,6 +94,51 @@ func (suite *LibraryTestSuite) TestLibraryToVOCarriesTitle() {
 	assert.Equal(suite.T(), "Persepolis", vo.Entries[0].VolumeTitle)
 }
 
+func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleByVolume() {
+	ctx := context.Background()
+	target := "vol-shared"
+	other := "vol-other"
+
+	changed := []string{
+		primitive.NewObjectID().Hex(),
+		primitive.NewObjectID().Hex(),
+		primitive.NewObjectID().Hex(),
+	}
+	for _, uid := range changed {
+		_, err := AddLibraryEntry(ctx, uid, target, "Old Title")
+		assert.NoError(suite.T(), err)
+	}
+	untouched := primitive.NewObjectID().Hex()
+	_, err := AddLibraryEntry(ctx, untouched, other, "Keep Me")
+	assert.NoError(suite.T(), err)
+
+	got, err := UpdateLibraryEntryTitleByVolume(ctx, target, "New Title")
+	assert.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(), changed, got)
+
+	for _, uid := range changed {
+		lib, err := GetLibraryByUser(ctx, uid)
+		assert.NoError(suite.T(), err)
+		assert.Equal(suite.T(), "New Title", lib.Entries[0].VolumeTitle)
+	}
+	otherLib, err := GetLibraryByUser(ctx, untouched)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "Keep Me", otherLib.Entries[0].VolumeTitle)
+
+	// Replay is a no-op: the same title matches no stale entries.
+	again, err := UpdateLibraryEntryTitleByVolume(ctx, target, "New Title")
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), again)
+}
+
+func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleByVolumeNoReferences() {
+	ctx := context.Background()
+
+	got, err := UpdateLibraryEntryTitleByVolume(ctx, "vol-nobody-has", "Whatever")
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), got)
+}
+
 func TestLibraryTestSuite(t *testing.T) {
 	suite.Run(t, new(LibraryTestSuite))
 }
