@@ -3,7 +3,7 @@
 <html>
 	<head>
 		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-		<title>data: Go Coverage Report</title>
+		<title>backfill-audit-fields: Go Coverage Report</title>
 		<style>
 			body {
 				background: black;
@@ -55,15 +55,21 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/sweetrpg/game-room-data.go/data/library.go (53.6%)</option>
+				<option value="file0">github.com/sweetrpg/game-room-data.go/cmd/backfill-audit-fields/main.go (0.0%)</option>
 				
-				<option value="file1">github.com/sweetrpg/game-room-data.go/data/migration.go (75.0%)</option>
+				<option value="file1">github.com/sweetrpg/game-room-data.go/data/audit.go (100.0%)</option>
 				
-				<option value="file2">github.com/sweetrpg/game-room-data.go/data/table.go (0.0%)</option>
+				<option value="file2">github.com/sweetrpg/game-room-data.go/data/backfill.go (70.5%)</option>
 				
-				<option value="file3">github.com/sweetrpg/game-room-data.go/data/visibility.go (100.0%)</option>
+				<option value="file3">github.com/sweetrpg/game-room-data.go/data/library.go (54.6%)</option>
 				
-				<option value="file4">github.com/sweetrpg/game-room-data.go/data/wishlist.go (66.7%)</option>
+				<option value="file4">github.com/sweetrpg/game-room-data.go/data/migration.go (75.0%)</option>
+				
+				<option value="file5">github.com/sweetrpg/game-room-data.go/data/table.go (41.1%)</option>
+				
+				<option value="file6">github.com/sweetrpg/game-room-data.go/data/visibility.go (100.0%)</option>
+				
+				<option value="file7">github.com/sweetrpg/game-room-data.go/data/wishlist.go (71.8%)</option>
 				
 				</select>
 			</div>
@@ -86,7 +92,226 @@
 		</div>
 		<div id="content">
 		
-		<pre class="file" id="file0" style="display: none">package data
+		<pre class="file" id="file0" style="display: none">// Command backfill-audit-fields seeds model-core audit fields (created_at/updated_at from the
+// ObjectID timestamp, created_by/updated_by from the document owner) on game-room table,
+// wishlist, and library documents that predate the audit-fields convention. It is idempotent.
+//
+// Usage:
+//
+//        backfill-audit-fields            # apply
+//        backfill-audit-fields -dry-run   # report candidate counts, write nothing
+//
+// Connection comes from the standard mongodb.go env vars (DB_URI, or DB_SCHEME/DB_HOST/... ).
+package main
+
+import (
+        "context"
+        "flag"
+        "fmt"
+        "os"
+
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/game-room-data.go/data"
+        "github.com/sweetrpg/mongodb.go/database"
+)
+
+func main() <span class="cov0" title="0">{
+        dryRun := flag.Bool("dry-run", false, "report candidate counts without writing")
+        flag.Parse()
+
+        logging.Init()
+        database.SetupDatabase()
+
+        results, err := data.BackfillAuditFields(context.Background(), *dryRun)
+        for _, r := range results </span><span class="cov0" title="0">{
+                if *dryRun </span><span class="cov0" title="0">{
+                        fmt.Printf("%-10s candidates: %d\n", r.Collection, r.Matched)
+                }</span> else<span class="cov0" title="0"> {
+                        fmt.Printf("%-10s matched: %d  updated: %d\n", r.Collection, r.Matched, r.Updated)
+                }</span>
+        }
+        <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                fmt.Fprintf(os.Stderr, "backfill failed: %v\n", err)
+                os.Exit(1)
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package data
+
+import (
+        "time"
+
+        modelcore "github.com/sweetrpg/model-core.go/models"
+        modelcorevo "github.com/sweetrpg/model-core.go/vo"
+        "go.mongodb.org/mongo-driver/bson"
+)
+
+// SystemActor is stamped into updated_by for writes not driven by a user request - currently the
+// event-driven volume-title denormalization refresh, which spans all owners on a trusted catalog
+// event rather than a caller action.
+const SystemActor = "system"
+
+// stampCreate sets all four create/update audit fields on a record being inserted, so a freshly
+// created document has created_at == updated_at and both *_by set to the acting user.
+func stampCreate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="27">{
+        a.CreatedAt = now
+        a.CreatedBy = actingUserID
+        a.UpdatedAt = now
+        a.UpdatedBy = actingUserID
+}</span>
+
+// stampUpdate advances updated_at/updated_by, leaving created_* untouched.
+func stampUpdate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="20">{
+        a.UpdatedAt = now
+        a.UpdatedBy = actingUserID
+}</span>
+
+// auditVO copies a model's audit block into its VO form for passthrough to the API response.
+func auditVO(a modelcore.Auditable) modelcorevo.AuditableVO <span class="cov3" title="3">{
+        return modelcorevo.AuditableVO{
+                CreatedAt: a.CreatedAt,
+                CreatedBy: a.CreatedBy,
+                UpdatedAt: a.UpdatedAt,
+                UpdatedBy: a.UpdatedBy,
+                DeletedAt: a.DeletedAt,
+                DeletedBy: a.DeletedBy,
+        }
+}</span>
+
+// live appends the soft-delete exclusion to a query filter. {deleted_at: nil} matches both an
+// absent field (docs not yet backfilled) and an explicit null (live docs post-backfill).
+func live(filter bson.D) bson.D <span class="cov10" title="75">{
+        return append(filter, bson.E{Key: "deleted_at", Value: nil})
+}</span>
+
+// softDeleteSet is the $set document for a soft delete: marks the record deleted and advances
+// the update stamp in the same write.
+func softDeleteSet(actingUserID string, now time.Time) bson.D <span class="cov4" title="5">{
+        return bson.D{{Key: "$set", Value: bson.D{
+                {Key: "deleted_at", Value: now},
+                {Key: "deleted_by", Value: actingUserID},
+                {Key: "updated_at", Value: now},
+                {Key: "updated_by", Value: actingUserID},
+        }}}
+}</span>
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package data
+
+import (
+        "context"
+        "time"
+
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/mongodb.go/database"
+        "go.mongodb.org/mongo-driver/bson"
+        "go.mongodb.org/mongo-driver/bson/primitive"
+        "go.mongodb.org/mongo-driver/mongo/options"
+)
+
+// auditBackfillCollections are the game-room owner-scoped collections whose documents predate the
+// audit-fields convention and need created_at/updated_at seeded from their ObjectID timestamp.
+var auditBackfillCollections = []string{tableCollection, wishlistCollection, libraryCollection}
+
+// CollectionBackfillResult reports what the backfill did (or would do, on a dry run) for one
+// collection.
+type CollectionBackfillResult struct {
+        Collection string
+        Matched    int
+        Updated    int
+}
+
+// backfillCandidateFilter matches documents with no usable created_at: the field is absent or is
+// the BSON zero date (0001-01-01). This is what makes the backfill idempotent - a second run
+// matches nothing.
+func backfillCandidateFilter() bson.D <span class="cov10" title="9">{
+        return bson.D{{Key: "$or", Value: bson.A{
+                bson.D{{Key: "created_at", Value: bson.D{{Key: "$exists", Value: false}}}},
+                bson.D{{Key: "created_at", Value: time.Time{}}},
+        }}}
+}</span>
+
+// BackfillAuditFields seeds created_at/updated_at (from the ObjectID hex in _id) and
+// created_by/updated_by (from the document's own user_id owner) on every table/wishlist/library
+// document that is missing them. It is idempotent. When dryRun is true it only counts candidates
+// and writes nothing.
+//
+// deleted_at/deleted_by are left untouched: a document that predates soft delete has neither
+// field, which reads as null everywhere the live() filter is applied.
+func BackfillAuditFields(c context.Context, dryRun bool) ([]CollectionBackfillResult, error) <span class="cov5" title="3">{
+        results := make([]CollectionBackfillResult, 0, len(auditBackfillCollections))
+        for _, name := range auditBackfillCollections </span><span class="cov10" title="9">{
+                res, err := backfillCollection(c, name, dryRun)
+                if err != nil </span><span class="cov0" title="0">{
+                        return results, err
+                }</span>
+                <span class="cov10" title="9">results = append(results, res)</span>
+        }
+        <span class="cov5" title="3">return results, nil</span>
+}
+
+func backfillCollection(c context.Context, name string, dryRun bool) (CollectionBackfillResult, error) <span class="cov10" title="9">{
+        res := CollectionBackfillResult{Collection: name}
+        coll := database.Db.Collection(name)
+        filter := backfillCandidateFilter()
+
+        if dryRun </span><span class="cov5" title="3">{
+                count, err := coll.CountDocuments(c, filter)
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Logger.Error("Error counting audit-backfill candidates", "collection", name, "error", err)
+                        return res, err
+                }</span>
+                <span class="cov5" title="3">res.Matched = int(count)
+                return res, nil</span>
+        }
+
+        <span class="cov8" title="6">cursor, err := coll.Find(c, filter, options.Find().SetProjection(bson.D{{Key: "_id", Value: 1}, {Key: "user_id", Value: 1}}))
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error finding audit-backfill candidates", "collection", name, "error", err)
+                return res, err
+        }</span>
+        <span class="cov8" title="6">defer func() </span><span class="cov8" title="6">{ _ = cursor.Close(c) }</span>()
+
+        <span class="cov8" title="6">for cursor.Next(c) </span><span class="cov3" title="2">{
+                var doc struct {
+                        ID     string `bson:"_id"`
+                        UserID string `bson:"user_id"`
+                }
+                if err := cursor.Decode(&amp;doc); err != nil </span><span class="cov0" title="0">{
+                        logging.Logger.Error("Error decoding audit-backfill candidate", "collection", name, "error", err)
+                        return res, err
+                }</span>
+                <span class="cov3" title="2">res.Matched++
+
+                oid, err := primitive.ObjectIDFromHex(doc.ID)
+                if err != nil </span><span class="cov0" title="0">{
+                        logging.Logger.Warn("Skipping audit-backfill for non-ObjectID _id", "collection", name, "id", doc.ID)
+                        continue</span>
+                }
+                <span class="cov3" title="2">ts := oid.Timestamp()
+
+                update := bson.D{{Key: "$set", Value: bson.D{
+                        {Key: "created_at", Value: ts},
+                        {Key: "updated_at", Value: ts},
+                        {Key: "created_by", Value: doc.UserID},
+                        {Key: "updated_by", Value: doc.UserID},
+                }}}
+                if _, err := coll.UpdateByID(c, doc.ID, update); err != nil </span><span class="cov0" title="0">{
+                        logging.Logger.Error("Error applying audit-backfill", "collection", name, "id", doc.ID, "error", err)
+                        return res, err
+                }</span>
+                <span class="cov3" title="2">res.Updated++</span>
+        }
+        <span class="cov8" title="6">if err := cursor.Err(); err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Cursor error during audit-backfill", "collection", name, "error", err)
+                return res, err
+        }</span>
+        <span class="cov8" title="6">return res, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package data
 
 import (
         "context"
@@ -99,74 +324,75 @@ import (
         "github.com/sweetrpg/mongodb.go/database"
         "go.mongodb.org/mongo-driver/bson"
         "go.mongodb.org/mongo-driver/bson/primitive"
-        "go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// GetLibraryByUser returns the given user's library, or nil if they don't have one yet.
-func GetLibraryByUser(c context.Context, userID string) (*models.Library, error) <span class="cov10" title="19">{
-        results, err := database.Query[models.Library](libraryCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 1)
+// GetLibraryByUser returns the given user's library, or nil if they don't have one yet or it has
+// been soft-deleted.
+func GetLibraryByUser(c context.Context, userID string) (*models.Library, error) <span class="cov10" title="22">{
+        results, err := database.Query[models.Library](libraryCollection, live(bson.D{{Key: "user_id", Value: userID}}), nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for library", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov10" title="19">if len(results) == 0 </span><span class="cov7" title="9">{
+        <span class="cov10" title="22">if len(results) == 0 </span><span class="cov7" title="10">{
                 return nil, nil
         }</span>
-        <span class="cov8" title="10">return results[0], nil</span>
+        <span class="cov8" title="12">return results[0], nil</span>
 }
 
 // getOrCreateLibrary returns the user's library, creating one (defaulting to private) if none
-// exists yet, per the "new library defaults to private" requirement.
-func getOrCreateLibrary(c context.Context, userID string) (*models.Library, error) <span class="cov8" title="10">{
+// exists yet, per the "new library defaults to private" requirement. actingUserID is stamped
+// into the audit fields of a newly created library.
+func getOrCreateLibrary(c context.Context, userID, actingUserID string) (*models.Library, error) <span class="cov7" title="11">{
         lib, err := GetLibraryByUser(c, userID)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov8" title="10">if lib != nil </span><span class="cov1" title="1">{
+        <span class="cov7" title="11">if lib != nil </span><span class="cov1" title="1">{
                 return lib, nil
         }</span>
 
-        <span class="cov7" title="9">newLib := models.NewLibrary(primitive.NewObjectID().Hex(), userID)
-        newLib.CreatedAt = time.Now()
-        newLib.CreatedBy = userID
+        <span class="cov7" title="10">newLib := models.NewLibrary(primitive.NewObjectID().Hex(), userID)
+        stampCreate(&amp;newLib.Auditable, actingUserID, time.Now())
         if _, err := database.Insert(libraryCollection, newLib); err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while inserting library", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov7" title="9">return &amp;newLib, nil</span>
+        <span class="cov7" title="10">return &amp;newLib, nil</span>
 }
 
-func replaceLibrary(c context.Context, lib *models.Library) error <span class="cov8" title="10">{
-        lib.UpdatedAt = time.Now()
-        _, err := database.Db.Collection(libraryCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: lib.ID}}, lib)
+func replaceLibrary(c context.Context, lib *models.Library, actingUserID string) error <span class="cov8" title="15">{
+        stampUpdate(&amp;lib.Auditable, actingUserID, time.Now())
+        _, err := database.Db.Collection(libraryCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: lib.ID}}), lib)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while replacing library", "id", lib.ID, "error", err)
         }</span>
-        <span class="cov8" title="10">return err</span>
+        <span class="cov8" title="15">return err</span>
 }
 
 // AddLibraryEntry links a catalog volume into the user's library, creating the library if it
 // doesn't exist yet. A no-op if the volume is already present. volumeTitle is a denormalized
-// snapshot of the volume's title at add time so entries can be displayed without a catalog lookup.
-func AddLibraryEntry(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) <span class="cov8" title="10">{
-        lib, err := getOrCreateLibrary(c, userID)
+// snapshot of the volume's title at add time so entries can be displayed without a catalog
+// lookup.
+func AddLibraryEntry(c context.Context, userID, volumeID, volumeTitle, actingUserID string) (*models.Library, error) <span class="cov7" title="11">{
+        lib, err := getOrCreateLibrary(c, userID, actingUserID)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov8" title="10">for _, e := range lib.Entries </span><span class="cov1" title="1">{
+        <span class="cov7" title="11">for _, e := range lib.Entries </span><span class="cov1" title="1">{
                 if e.VolumeID == volumeID </span><span class="cov1" title="1">{
                         return lib, nil
                 }</span>
         }
-        <span class="cov7" title="9">lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now(), VolumeTitle: volumeTitle})
-        if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+        <span class="cov7" title="10">lib.Entries = append(lib.Entries, models.LibraryEntry{VolumeID: volumeID, AddedAt: time.Now(), VolumeTitle: volumeTitle})
+        if err := replaceLibrary(c, lib, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov7" title="9">return lib, nil</span>
+        <span class="cov7" title="10">return lib, nil</span>
 }
 
 // RemoveLibraryEntry unlinks a catalog volume from the user's library.
-func RemoveLibraryEntry(c context.Context, userID, volumeID string) (*models.Library, error) <span class="cov0" title="0">{
+func RemoveLibraryEntry(c context.Context, userID, volumeID, actingUserID string) (*models.Library, error) <span class="cov0" title="0">{
         lib, err := GetLibraryByUser(c, userID)
         if err != nil || lib == nil </span><span class="cov0" title="0">{
                 return lib, err
@@ -178,7 +404,7 @@ func RemoveLibraryEntry(c context.Context, userID, volumeID string) (*models.Lib
                 }</span>
         }
         <span class="cov0" title="0">lib.Entries = kept
-        if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+        if err := replaceLibrary(c, lib, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov0" title="0">return lib, nil</span>
@@ -186,13 +412,13 @@ func RemoveLibraryEntry(c context.Context, userID, volumeID string) (*models.Lib
 
 // SetLibraryDefaultVisibility updates the library's default visibility, creating the library
 // (private default) first if the user doesn't have one yet.
-func SetLibraryDefaultVisibility(c context.Context, userID string, newDefault models.Visibility) (*models.Library, error) <span class="cov0" title="0">{
-        lib, err := getOrCreateLibrary(c, userID)
+func SetLibraryDefaultVisibility(c context.Context, userID string, newDefault models.Visibility, actingUserID string) (*models.Library, error) <span class="cov0" title="0">{
+        lib, err := getOrCreateLibrary(c, userID, actingUserID)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov0" title="0">lib.DefaultVisibility = newDefault
-        if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+        if err := replaceLibrary(c, lib, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov0" title="0">return lib, nil</span>
@@ -200,7 +426,7 @@ func SetLibraryDefaultVisibility(c context.Context, userID string, newDefault mo
 
 // SetLibraryEntryVisibilityOverride sets or clears (override == nil) one entry's per-entry
 // visibility override.
-func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID string, override *models.Visibility) (*models.Library, error) <span class="cov0" title="0">{
+func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID string, override *models.Visibility, actingUserID string) (*models.Library, error) <span class="cov0" title="0">{
         lib, err := GetLibraryByUser(c, userID)
         if err != nil || lib == nil </span><span class="cov0" title="0">{
                 return lib, err
@@ -211,7 +437,7 @@ func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID strin
                         break</span>
                 }
         }
-        <span class="cov0" title="0">if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+        <span class="cov0" title="0">if err := replaceLibrary(c, lib, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov0" title="0">return lib, nil</span>
@@ -221,18 +447,18 @@ func SetLibraryEntryVisibilityOverride(c context.Context, userID, volumeID strin
 var ErrLibraryEntryNotFound = errors.New("library entry not found")
 
 // UpdateLibraryEntryTitle refreshes the denormalized title snapshot on a single library entry.
-func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle string) (*models.Library, error) <span class="cov3" title="2">{
+func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle, actingUserID string) (*models.Library, error) <span class="cov4" title="3">{
         lib, err := GetLibraryByUser(c, userID)
         if err != nil || lib == nil </span><span class="cov0" title="0">{
                 return lib, err
         }</span>
-        <span class="cov3" title="2">for i, e := range lib.Entries </span><span class="cov3" title="2">{
-                if e.VolumeID == volumeID </span><span class="cov1" title="1">{
+        <span class="cov4" title="3">for i, e := range lib.Entries </span><span class="cov4" title="3">{
+                if e.VolumeID == volumeID </span><span class="cov3" title="2">{
                         lib.Entries[i].VolumeTitle = volumeTitle
-                        if err := replaceLibrary(c, lib); err != nil </span><span class="cov0" title="0">{
+                        if err := replaceLibrary(c, lib, actingUserID); err != nil </span><span class="cov0" title="0">{
                                 return nil, err
                         }</span>
-                        <span class="cov1" title="1">return lib, nil</span>
+                        <span class="cov3" title="2">return lib, nil</span>
                 }
         }
         <span class="cov1" title="1">return nil, ErrLibraryEntryNotFound</span>
@@ -245,12 +471,12 @@ func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle st
 // applies to user-initiated access, not to this event-driven denormalization refresh. Idempotent:
 // a replay with an unchanged title matches no entries and returns an empty slice.
 func UpdateLibraryEntryTitleByVolume(c context.Context, volumeID, volumeTitle string) ([]string, error) <span class="cov4" title="3">{
-        stale, err := database.Query[models.Library](libraryCollection, bson.D{
+        stale, err := database.Query[models.Library](libraryCollection, live(bson.D{
                 {Key: "entries", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
                         {Key: "volume_id", Value: volumeID},
                         {Key: "volume_title", Value: bson.D{{Key: "$ne", Value: volumeTitle}}},
                 }}}},
-        }, nil, nil, 0, 0)
+        }), nil, nil, 0, 0)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying libraries for volume title sync", "volumeID", volumeID, "error", err)
                 return nil, err
@@ -259,25 +485,22 @@ func UpdateLibraryEntryTitleByVolume(c context.Context, volumeID, volumeTitle st
                 return []string{}, nil
         }</span>
 
+        // ponytail: one whole-document replace per affected library. A volume retitle is a rare
+        // catalog event and the fan-out is small (users who own that volume), so N replaces beats a
+        // positional-array $set here - and it reuses replaceLibrary's audit stamping. Revisit with a
+        // bulk write if a single volume ever lands in tens of thousands of libraries.
         <span class="cov1" title="1">userIDs := make([]string, 0, len(stale))
         for _, lib := range stale </span><span class="cov4" title="3">{
-                userIDs = append(userIDs, lib.UserID)
-        }</span>
-
-        <span class="cov1" title="1">_, err = database.Db.Collection(libraryCollection).UpdateMany(c,
-                bson.D{{Key: "entries.volume_id", Value: volumeID}},
-                bson.D{{Key: "$set", Value: bson.D{
-                        {Key: "entries.$[e].volume_title", Value: volumeTitle},
-                        {Key: "updated_at", Value: time.Now()},
-                }}},
-                options.Update().SetArrayFilters(options.ArrayFilters{
-                        Filters: []interface{}{bson.D{{Key: "e.volume_id", Value: volumeID}}},
-                }),
-        )
-        if err != nil </span><span class="cov0" title="0">{
-                logging.Logger.Error("Error while bulk-updating library entry titles", "volumeID", volumeID, "error", err)
-                return nil, err
-        }</span>
+                for i := range lib.Entries </span><span class="cov4" title="3">{
+                        if lib.Entries[i].VolumeID == volumeID </span><span class="cov4" title="3">{
+                                lib.Entries[i].VolumeTitle = volumeTitle
+                        }</span>
+                }
+                <span class="cov4" title="3">if err := replaceLibrary(c, lib, SystemActor); err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov4" title="3">userIDs = append(userIDs, lib.UserID)</span>
+        }
         <span class="cov1" title="1">return userIDs, nil</span>
 }
 
@@ -304,11 +527,12 @@ func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFrien
                 UserID:            lib.UserID,
                 DefaultVisibility: string(lib.DefaultVisibility),
                 Entries:           entries,
+                AuditableVO:       auditVO(lib.Auditable),
         }</span>
 }
 </pre>
 		
-		<pre class="file" id="file1" style="display: none">package data
+		<pre class="file" id="file4" style="display: none">package data
 
 import (
         "context"
@@ -340,7 +564,7 @@ func MigrateWishlistNames(c context.Context) (int, error) <span class="cov10" ti
 }
 </pre>
 		
-		<pre class="file" id="file2" style="display: none">package data
+		<pre class="file" id="file5" style="display: none">package data
 
 import (
         "context"
@@ -354,90 +578,89 @@ import (
         "go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// GetTable returns one table by ID, or nil if it doesn't exist. Unscoped by owner - only for
-// read paths, which apply visibility filtering separately via TableToVO/CanView. Write paths
-// must use getOwnedTable instead.
-func GetTable(c context.Context, id string) (*models.Table, error) <span class="cov0" title="0">{
-        results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
+// GetTable returns one table by ID, or nil if it doesn't exist or has been soft-deleted.
+// Unscoped by owner - only for read paths, which apply visibility filtering separately via
+// TableToVO/CanView. Write paths must use getOwnedTable instead.
+func GetTable(c context.Context, id string) (*models.Table, error) <span class="cov10" title="4">{
+        results, err := database.Query[models.Table](tableCollection, live(bson.D{{Key: "_id", Value: id}}), nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for table", "id", id, "error", err)
                 return nil, err
         }</span>
-        <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
+        <span class="cov10" title="4">if len(results) == 0 </span><span class="cov1" title="1">{
                 return nil, nil
         }</span>
-        <span class="cov0" title="0">return results[0], nil</span>
+        <span class="cov8" title="3">return results[0], nil</span>
 }
 
-// getOwnedTable returns the table only if it exists and is owned by ownerUserID, via a single
-// query filtered on both fields. Returns (nil, nil) both when the table doesn't exist and when
-// it's owned by someone else - callers needing to tell those apart (to choose between a 403 and
-// a 404 response) should follow up with GetTable.
-func getOwnedTable(c context.Context, id, ownerUserID string) (*models.Table, error) <span class="cov0" title="0">{
-        results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}, nil, nil, 0, 1)
+// getOwnedTable returns the table only if it exists, is not soft-deleted, and is owned by
+// ownerUserID, via a single query filtered on both fields. Returns (nil, nil) both when the table
+// doesn't exist and when it's owned by someone else - callers needing to tell those apart (to
+// choose between a 403 and a 404 response) should follow up with GetTable.
+func getOwnedTable(c context.Context, id, ownerUserID string) (*models.Table, error) <span class="cov1" title="1">{
+        results, err := database.Query[models.Table](tableCollection, live(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}), nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for owned table", "id", id, "ownerUserID", ownerUserID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov0" title="0">if len(results) == 0 </span><span class="cov0" title="0">{
+        <span class="cov1" title="1">if len(results) == 0 </span><span class="cov0" title="0">{
                 return nil, nil
         }</span>
-        <span class="cov0" title="0">return results[0], nil</span>
+        <span class="cov1" title="1">return results[0], nil</span>
 }
 
-// ListTablesByUser returns every table owned by the given user.
-func ListTablesByUser(c context.Context, userID string) ([]*models.Table, error) <span class="cov0" title="0">{
-        results, err := database.Query[models.Table](tableCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 0)
+// ListTablesByUser returns every live table owned by the given user.
+func ListTablesByUser(c context.Context, userID string) ([]*models.Table, error) <span class="cov1" title="1">{
+        results, err := database.Query[models.Table](tableCollection, live(bson.D{{Key: "user_id", Value: userID}}), nil, nil, 0, 0)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for tables", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov0" title="0">return results, nil</span>
+        <span class="cov1" title="1">return results, nil</span>
 }
 
 // CreateTable creates a new table, defaulting to private visibility per the "new tables default
-// to private" requirement.
-func CreateTable(c context.Context, userID, name string) (*models.Table, error) <span class="cov0" title="0">{
+// to private" requirement. actingUserID is the caller stamped into the audit fields.
+func CreateTable(c context.Context, userID, name, actingUserID string) (*models.Table, error) <span class="cov10" title="4">{
         tbl := models.NewTable(primitive.NewObjectID().Hex(), userID, name)
-        tbl.CreatedAt = time.Now()
-        tbl.CreatedBy = userID
+        stampCreate(&amp;tbl.Auditable, actingUserID, time.Now())
         if _, err := database.Insert(tableCollection, tbl); err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while inserting table", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov0" title="0">return &amp;tbl, nil</span>
+        <span class="cov10" title="4">return &amp;tbl, nil</span>
 }
 
-func replaceTable(c context.Context, tbl *models.Table) error <span class="cov0" title="0">{
-        tbl.UpdatedAt = time.Now()
-        _, err := database.Db.Collection(tableCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: tbl.ID}, {Key: "user_id", Value: tbl.UserID}}, tbl)
+func replaceTable(c context.Context, tbl *models.Table, actingUserID string) error <span class="cov1" title="1">{
+        stampUpdate(&amp;tbl.Auditable, actingUserID, time.Now())
+        _, err := database.Db.Collection(tableCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: tbl.ID}, {Key: "user_id", Value: tbl.UserID}}), tbl)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while replacing table", "id", tbl.ID, "error", err)
         }</span>
-        <span class="cov0" title="0">return err</span>
+        <span class="cov1" title="1">return err</span>
 }
 
 // UpdateTableName renames a table owned by ownerUserID.
-func UpdateTableName(c context.Context, id, ownerUserID, name string) (*models.Table, error) <span class="cov0" title="0">{
+func UpdateTableName(c context.Context, id, ownerUserID, name, actingUserID string) (*models.Table, error) <span class="cov1" title="1">{
         tbl, err := getOwnedTable(c, id, ownerUserID)
         if err != nil || tbl == nil </span><span class="cov0" title="0">{
                 return tbl, err
         }</span>
-        <span class="cov0" title="0">tbl.Name = name
-        if err := replaceTable(c, tbl); err != nil </span><span class="cov0" title="0">{
+        <span class="cov1" title="1">tbl.Name = name
+        if err := replaceTable(c, tbl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov0" title="0">return tbl, nil</span>
+        <span class="cov1" title="1">return tbl, nil</span>
 }
 
 // SetTableVisibility updates the visibility of a table owned by ownerUserID.
-func SetTableVisibility(c context.Context, id, ownerUserID string, visibility models.Visibility) (*models.Table, error) <span class="cov0" title="0">{
+func SetTableVisibility(c context.Context, id, ownerUserID string, visibility models.Visibility, actingUserID string) (*models.Table, error) <span class="cov0" title="0">{
         tbl, err := getOwnedTable(c, id, ownerUserID)
         if err != nil || tbl == nil </span><span class="cov0" title="0">{
                 return tbl, err
         }</span>
         <span class="cov0" title="0">tbl.Visibility = visibility
-        if err := replaceTable(c, tbl); err != nil </span><span class="cov0" title="0">{
+        if err := replaceTable(c, tbl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov0" title="0">return tbl, nil</span>
@@ -445,7 +668,7 @@ func SetTableVisibility(c context.Context, id, ownerUserID string, visibility mo
 
 // AddTableVolume links a catalog volume into a table owned by ownerUserID. A no-op if already
 // present.
-func AddTableVolume(c context.Context, id, ownerUserID, volumeID string) (*models.Table, error) <span class="cov0" title="0">{
+func AddTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID string) (*models.Table, error) <span class="cov0" title="0">{
         tbl, err := getOwnedTable(c, id, ownerUserID)
         if err != nil || tbl == nil </span><span class="cov0" title="0">{
                 return tbl, err
@@ -456,14 +679,14 @@ func AddTableVolume(c context.Context, id, ownerUserID, volumeID string) (*model
                 }</span>
         }
         <span class="cov0" title="0">tbl.VolumeIDs = append(tbl.VolumeIDs, volumeID)
-        if err := replaceTable(c, tbl); err != nil </span><span class="cov0" title="0">{
+        if err := replaceTable(c, tbl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov0" title="0">return tbl, nil</span>
 }
 
 // RemoveTableVolume unlinks a catalog volume from a table owned by ownerUserID.
-func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID string) (*models.Table, error) <span class="cov0" title="0">{
+func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID string) (*models.Table, error) <span class="cov0" title="0">{
         tbl, err := getOwnedTable(c, id, ownerUserID)
         if err != nil || tbl == nil </span><span class="cov0" title="0">{
                 return tbl, err
@@ -475,40 +698,45 @@ func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID string) (*mo
                 }</span>
         }
         <span class="cov0" title="0">tbl.VolumeIDs = kept
-        if err := replaceTable(c, tbl); err != nil </span><span class="cov0" title="0">{
+        if err := replaceTable(c, tbl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov0" title="0">return tbl, nil</span>
 }
 
-// DeleteTable removes a table owned by ownerUserID. Returns whether a document was actually
-// deleted, so callers can tell "not found" apart from "found but not owned by ownerUserID".
-func DeleteTable(c context.Context, id, ownerUserID string) (bool, error) <span class="cov0" title="0">{
-        result, err := database.Db.Collection(tableCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}})
+// DeleteTable soft-deletes a table owned by ownerUserID: it sets deleted_at/deleted_by via $set
+// rather than removing the document. Returns whether a live document was actually marked, so
+// callers can tell "not found" (or already deleted) apart from "found but not owned by
+// ownerUserID".
+func DeleteTable(c context.Context, id, ownerUserID, actingUserID string) (bool, error) <span class="cov5" title="2">{
+        result, err := database.Db.Collection(tableCollection).UpdateOne(c,
+                live(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}),
+                softDeleteSet(actingUserID, time.Now()))
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while deleting table", "id", id, "error", err)
                 return false, err
         }</span>
-        <span class="cov0" title="0">return result.DeletedCount &gt; 0, nil</span>
+        <span class="cov5" title="2">return result.ModifiedCount &gt; 0, nil</span>
 }
 
 // TableToVO converts a table model into its VO, or nil if viewerID may not see it at all.
-func TableToVO(tbl *models.Table, viewerID string, isFriend, isFriendOfFriend bool) *vo.TableVO <span class="cov0" title="0">{
+func TableToVO(tbl *models.Table, viewerID string, isFriend, isFriendOfFriend bool) *vo.TableVO <span class="cov1" title="1">{
         if !CanView(tbl.Visibility, tbl.UserID, viewerID, isFriend, isFriendOfFriend) </span><span class="cov0" title="0">{
                 return nil
         }</span>
 
-        <span class="cov0" title="0">return &amp;vo.TableVO{
-                ID:         tbl.ID,
-                UserID:     tbl.UserID,
-                Name:       tbl.Name,
-                VolumeIDs:  tbl.VolumeIDs,
-                Visibility: string(tbl.Visibility),
+        <span class="cov1" title="1">return &amp;vo.TableVO{
+                ID:          tbl.ID,
+                UserID:      tbl.UserID,
+                Name:        tbl.Name,
+                VolumeIDs:   tbl.VolumeIDs,
+                Visibility:  string(tbl.Visibility),
+                AuditableVO: auditVO(tbl.Auditable),
         }</span>
 }
 </pre>
 		
-		<pre class="file" id="file3" style="display: none">package data
+		<pre class="file" id="file6" style="display: none">package data
 
 import "github.com/sweetrpg/game-room-objects.go/models"
 
@@ -516,15 +744,15 @@ import "github.com/sweetrpg/game-room-objects.go/models"
 // Friendship isn't implemented yet, so callers always pass isFriend/isFriendOfFriend as false -
 // this is the single code path that will start returning real friend-scoped results once
 // friendship ships, per design.md.
-func CanView(vis models.Visibility, ownerID, viewerID string, isFriend, isFriendOfFriend bool) bool <span class="cov10" title="11">{
-        if viewerID != "" &amp;&amp; viewerID == ownerID </span><span class="cov3" title="2">{
+func CanView(vis models.Visibility, ownerID, viewerID string, isFriend, isFriendOfFriend bool) bool <span class="cov10" title="13">{
+        if viewerID != "" &amp;&amp; viewerID == ownerID </span><span class="cov5" title="4">{
                 return true
         }</span>
 
-        <span class="cov9" title="9">switch vis </span>{
+        <span class="cov8" title="9">switch vis </span>{
         case models.VisibilityPublic:<span class="cov3" title="2">
                 return true</span>
-        case models.VisibilityFriendsOfFriends:<span class="cov5" title="3">
+        case models.VisibilityFriendsOfFriends:<span class="cov4" title="3">
                 return isFriend || isFriendOfFriend</span>
         case models.VisibilityFriends:<span class="cov3" title="2">
                 return isFriend</span>
@@ -538,7 +766,7 @@ func CanView(vis models.Visibility, ownerID, viewerID string, isFriend, isFriend
 // never affected by a default change, so only unoverridden entries are considered.
 func PreviewLibraryDefaultChange(lib *models.Library, newDefault models.Visibility) []string <span class="cov3" title="2">{
         affected := make([]string, 0)
-        for _, e := range lib.Entries </span><span class="cov6" title="4">{
+        for _, e := range lib.Entries </span><span class="cov5" title="4">{
                 if e.VisibilityOverride != nil </span><span class="cov3" title="2">{
                         continue</span>
                 }
@@ -550,7 +778,7 @@ func PreviewLibraryDefaultChange(lib *models.Library, newDefault models.Visibili
 }
 </pre>
 		
-		<pre class="file" id="file4" style="display: none">package data
+		<pre class="file" id="file7" style="display: none">package data
 
 import (
         "context"
@@ -565,88 +793,91 @@ import (
         "go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// GetWishlist returns one wishlist by ID, or nil if it doesn't exist. Unscoped by owner - only
-// for read paths, which apply visibility filtering separately via WishlistToVO/CanView. Write
-// paths must use getOwnedWishlist instead.
-func GetWishlist(c context.Context, id string) (*models.Wishlist, error) <span class="cov9" title="10">{
-        results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "_id", Value: id}}, nil, nil, 0, 1)
+// GetWishlist returns one wishlist by ID, or nil if it doesn't exist or has been soft-deleted.
+// Unscoped by owner - only for read paths, which apply visibility filtering separately via
+// WishlistToVO/CanView. Write paths must use getOwnedWishlist instead.
+func GetWishlist(c context.Context, id string) (*models.Wishlist, error) <span class="cov9" title="11">{
+        results, err := database.Query[models.Wishlist](wishlistCollection, live(bson.D{{Key: "_id", Value: id}}), nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for wishlist", "id", id, "error", err)
                 return nil, err
         }</span>
-        <span class="cov9" title="10">if len(results) == 0 </span><span class="cov1" title="1">{
+        <span class="cov9" title="11">if len(results) == 0 </span><span class="cov1" title="1">{
                 return nil, nil
         }</span>
-        <span class="cov8" title="9">return results[0], nil</span>
+        <span class="cov8" title="10">return results[0], nil</span>
 }
 
-// getOwnedWishlist returns the wishlist only if it exists and is owned by ownerUserID, via a
-// single query filtered on both fields. Returns (nil, nil) both when the wishlist doesn't exist
-// and when it's owned by someone else - callers needing to tell those apart (to choose between
-// a 403 and a 404 response) should follow up with GetWishlist.
-func getOwnedWishlist(c context.Context, id, ownerUserID string) (*models.Wishlist, error) <span class="cov6" title="5">{
-        results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}, nil, nil, 0, 1)
+// getOwnedWishlist returns the wishlist only if it exists, is not soft-deleted, and is owned by
+// ownerUserID, via a single query filtered on both fields. Returns (nil, nil) both when the
+// wishlist doesn't exist and when it's owned by someone else - callers needing to tell those
+// apart (to choose between a 403 and a 404 response) should follow up with GetWishlist.
+func getOwnedWishlist(c context.Context, id, ownerUserID string) (*models.Wishlist, error) <span class="cov7" title="6">{
+        results, err := database.Query[models.Wishlist](wishlistCollection, live(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}), nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for owned wishlist", "id", id, "ownerUserID", ownerUserID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov6" title="5">if len(results) == 0 </span><span class="cov3" title="2">{
+        <span class="cov7" title="6">if len(results) == 0 </span><span class="cov3" title="2">{
                 return nil, nil
         }</span>
-        <span class="cov4" title="3">return results[0], nil</span>
+        <span class="cov5" title="4">return results[0], nil</span>
 }
 
-// ListWishlistsByUser returns every wishlist owned by the given user.
-func ListWishlistsByUser(c context.Context, userID string) ([]*models.Wishlist, error) <span class="cov1" title="1">{
-        results, err := database.Query[models.Wishlist](wishlistCollection, bson.D{{Key: "user_id", Value: userID}}, nil, nil, 0, 0)
+// ListWishlistsByUser returns every live wishlist owned by the given user.
+func ListWishlistsByUser(c context.Context, userID string) ([]*models.Wishlist, error) <span class="cov3" title="2">{
+        results, err := database.Query[models.Wishlist](wishlistCollection, live(bson.D{{Key: "user_id", Value: userID}}), nil, nil, 0, 0)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for wishlists", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov1" title="1">return results, nil</span>
+        <span class="cov3" title="2">return results, nil</span>
 }
 
 // CreateWishlist creates a new named wishlist, defaulting to private visibility per the "new
-// wishlists default to private" requirement.
-func CreateWishlist(c context.Context, userID, name string) (*models.Wishlist, error) <span class="cov10" title="12">{
+// wishlists default to private" requirement. actingUserID is the caller stamped into the audit
+// fields.
+func CreateWishlist(c context.Context, userID, name, actingUserID string) (*models.Wishlist, error) <span class="cov10" title="14">{
         if name == "" </span><span class="cov1" title="1">{
                 return nil, fmt.Errorf("wishlist name must not be empty")
         }</span>
 
-        <span class="cov9" title="11">wl := models.NewWishlist(primitive.NewObjectID().Hex(), userID, name)
-        wl.CreatedAt = time.Now()
-        wl.CreatedBy = userID
+        <span class="cov9" title="13">wl := models.NewWishlist(primitive.NewObjectID().Hex(), userID, name)
+        stampCreate(&amp;wl.Auditable, actingUserID, time.Now())
         if _, err := database.Insert(wishlistCollection, wl); err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while inserting wishlist", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov9" title="11">return &amp;wl, nil</span>
+        <span class="cov9" title="13">return &amp;wl, nil</span>
 }
 
-// DeleteWishlist removes a wishlist owned by ownerUserID, and its entries with it, entirely.
-// Returns whether a document was actually deleted, so callers can tell "not found" apart from
+// DeleteWishlist soft-deletes a wishlist owned by ownerUserID: it sets deleted_at/deleted_by via
+// $set rather than removing the document (its entries go with it). Returns whether a live
+// document was actually marked, so callers can tell "not found" (or already deleted) apart from
 // "found but not owned by ownerUserID".
-func DeleteWishlist(c context.Context, id, ownerUserID string) (bool, error) <span class="cov3" title="2">{
-        result, err := database.Db.Collection(wishlistCollection).DeleteOne(c, bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}})
+func DeleteWishlist(c context.Context, id, ownerUserID, actingUserID string) (bool, error) <span class="cov4" title="3">{
+        result, err := database.Db.Collection(wishlistCollection).UpdateOne(c,
+                live(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}),
+                softDeleteSet(actingUserID, time.Now()))
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while deleting wishlist", "id", id, "error", err)
                 return false, err
         }</span>
-        <span class="cov3" title="2">return result.DeletedCount &gt; 0, nil</span>
+        <span class="cov4" title="3">return result.ModifiedCount &gt; 0, nil</span>
 }
 
-func replaceWishlist(c context.Context, wl *models.Wishlist) error <span class="cov4" title="3">{
-        wl.UpdatedAt = time.Now()
-        _, err := database.Db.Collection(wishlistCollection).ReplaceOne(c, bson.D{{Key: "_id", Value: wl.ID}, {Key: "user_id", Value: wl.UserID}}, wl)
+func replaceWishlist(c context.Context, wl *models.Wishlist, actingUserID string) error <span class="cov5" title="4">{
+        stampUpdate(&amp;wl.Auditable, actingUserID, time.Now())
+        _, err := database.Db.Collection(wishlistCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: wl.ID}, {Key: "user_id", Value: wl.UserID}}), wl)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while replacing wishlist", "id", wl.ID, "error", err)
         }</span>
-        <span class="cov4" title="3">return err</span>
+        <span class="cov5" title="4">return err</span>
 }
 
 // AddWishlistEntry links a catalog volume into a wishlist owned by ownerUserID. A no-op if the
 // volume is already present.
-func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID string) (*models.Wishlist, error) <span class="cov3" title="2">{
+func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID, actingUserID string) (*models.Wishlist, error) <span class="cov3" title="2">{
         wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
         if err != nil || wl == nil </span><span class="cov1" title="1">{
                 return wl, err
@@ -657,14 +888,14 @@ func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID strin
                 }</span>
         }
         <span class="cov1" title="1">wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID, AddedAt: time.Now()})
-        if err := replaceWishlist(c, wl); err != nil </span><span class="cov0" title="0">{
+        if err := replaceWishlist(c, wl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov1" title="1">return wl, nil</span>
 }
 
 // RemoveWishlistEntry unlinks a catalog volume from a wishlist owned by ownerUserID.
-func RemoveWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID string) (*models.Wishlist, error) <span class="cov1" title="1">{
+func RemoveWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID, actingUserID string) (*models.Wishlist, error) <span class="cov1" title="1">{
         wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
         if err != nil || wl == nil </span><span class="cov0" title="0">{
                 return wl, err
@@ -676,42 +907,43 @@ func RemoveWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID st
                 }</span>
         }
         <span class="cov1" title="1">wl.Entries = kept
-        if err := replaceWishlist(c, wl); err != nil </span><span class="cov0" title="0">{
+        if err := replaceWishlist(c, wl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
         <span class="cov1" title="1">return wl, nil</span>
 }
 
 // SetWishlistVisibility updates the visibility of a wishlist owned by ownerUserID.
-func SetWishlistVisibility(c context.Context, wishlistID, ownerUserID string, visibility models.Visibility) (*models.Wishlist, error) <span class="cov3" title="2">{
+func SetWishlistVisibility(c context.Context, wishlistID, ownerUserID string, visibility models.Visibility, actingUserID string) (*models.Wishlist, error) <span class="cov4" title="3">{
         wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
         if err != nil || wl == nil </span><span class="cov1" title="1">{
                 return wl, err
         }</span>
-        <span class="cov1" title="1">wl.Visibility = visibility
-        if err := replaceWishlist(c, wl); err != nil </span><span class="cov0" title="0">{
+        <span class="cov3" title="2">wl.Visibility = visibility
+        if err := replaceWishlist(c, wl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov1" title="1">return wl, nil</span>
+        <span class="cov3" title="2">return wl, nil</span>
 }
 
 // WishlistToVO converts a wishlist model into its VO, or nil if viewerID may not see it at all.
-func WishlistToVO(wl *models.Wishlist, viewerID string, isFriend, isFriendOfFriend bool) *vo.WishlistVO <span class="cov0" title="0">{
+func WishlistToVO(wl *models.Wishlist, viewerID string, isFriend, isFriendOfFriend bool) *vo.WishlistVO <span class="cov1" title="1">{
         if !CanView(wl.Visibility, wl.UserID, viewerID, isFriend, isFriendOfFriend) </span><span class="cov0" title="0">{
                 return nil
         }</span>
 
-        <span class="cov0" title="0">entries := make([]vo.WishlistEntryVO, 0, len(wl.Entries))
+        <span class="cov1" title="1">entries := make([]vo.WishlistEntryVO, 0, len(wl.Entries))
         for _, e := range wl.Entries </span><span class="cov0" title="0">{
                 entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID, AddedAt: e.AddedAt})
         }</span>
 
-        <span class="cov0" title="0">return &amp;vo.WishlistVO{
-                ID:         wl.ID,
-                UserID:     wl.UserID,
-                Name:       wl.Name,
-                Visibility: string(wl.Visibility),
-                Entries:    entries,
+        <span class="cov1" title="1">return &amp;vo.WishlistVO{
+                ID:          wl.ID,
+                UserID:      wl.UserID,
+                Name:        wl.Name,
+                Visibility:  string(wl.Visibility),
+                Entries:     entries,
+                AuditableVO: auditVO(wl.Auditable),
         }</span>
 }
 </pre>
