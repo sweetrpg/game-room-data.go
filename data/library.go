@@ -11,6 +11,7 @@ import (
 	"github.com/sweetrpg/mongodb.go/database"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // GetLibraryByUser returns the given user's library, or nil if they don't have one yet.
@@ -147,6 +148,49 @@ func UpdateLibraryEntryTitle(c context.Context, userID, volumeID, volumeTitle st
 		}
 	}
 	return nil, ErrLibraryEntryNotFound
+}
+
+// UpdateLibraryEntryTitleByVolume refreshes the denormalized volume-title snapshot on every
+// library entry across all users that references volumeID, in one bulk update, and returns the
+// IDs of the users whose libraries actually changed. This is driven by a trusted catalog
+// volume.updated event, not a user request, so it deliberately spans all owners - owner-scoping
+// applies to user-initiated access, not to this event-driven denormalization refresh. Idempotent:
+// a replay with an unchanged title matches no entries and returns an empty slice.
+func UpdateLibraryEntryTitleByVolume(c context.Context, volumeID, volumeTitle string) ([]string, error) {
+	stale, err := database.Query[models.Library](libraryCollection, bson.D{
+		{Key: "entries", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
+			{Key: "volume_id", Value: volumeID},
+			{Key: "volume_title", Value: bson.D{{Key: "$ne", Value: volumeTitle}}},
+		}}}},
+	}, nil, nil, 0, 0)
+	if err != nil {
+		logging.Logger.Error("Error while querying libraries for volume title sync", "volumeID", volumeID, "error", err)
+		return nil, err
+	}
+	if len(stale) == 0 {
+		return []string{}, nil
+	}
+
+	userIDs := make([]string, 0, len(stale))
+	for _, lib := range stale {
+		userIDs = append(userIDs, lib.UserID)
+	}
+
+	_, err = database.Db.Collection(libraryCollection).UpdateMany(c,
+		bson.D{{Key: "entries.volume_id", Value: volumeID}},
+		bson.D{{Key: "$set", Value: bson.D{
+			{Key: "entries.$[e].volume_title", Value: volumeTitle},
+			{Key: "updated_at", Value: time.Now()},
+		}}},
+		options.Update().SetArrayFilters(options.ArrayFilters{
+			Filters: []interface{}{bson.D{{Key: "e.volume_id", Value: volumeID}}},
+		}),
+	)
+	if err != nil {
+		logging.Logger.Error("Error while bulk-updating library entry titles", "volumeID", volumeID, "error", err)
+		return nil, err
+	}
+	return userIDs, nil
 }
 
 // LibraryToVO converts a library model, filtered to what viewerID may see, into its VO. ownerID
