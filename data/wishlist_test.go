@@ -159,7 +159,7 @@ func (suite *WishlistTestSuite) TestEntryAndVisibilityScopedToWishlistID() {
 	b, err := CreateWishlist(ctx, userID, "B", userID)
 	assert.NoError(suite.T(), err)
 
-	updated, err := AddWishlistEntry(ctx, a.ID, userID, "vol-1", userID)
+	updated, err := AddWishlistEntry(ctx, a.ID, userID, "vol-1", "", userID)
 	assert.NoError(suite.T(), err)
 	assert.Len(suite.T(), updated.Entries, 1)
 
@@ -188,7 +188,7 @@ func (suite *WishlistTestSuite) TestEntryMutatorsRejectNonOwner() {
 	wl, err := CreateWishlist(ctx, owner, "Mine", owner)
 	assert.NoError(suite.T(), err)
 
-	got, err := AddWishlistEntry(ctx, wl.ID, intruder, "vol-1", intruder)
+	got, err := AddWishlistEntry(ctx, wl.ID, intruder, "vol-1", "", intruder)
 	assert.NoError(suite.T(), err)
 	assert.Nil(suite.T(), got)
 
@@ -217,6 +217,72 @@ func (suite *WishlistTestSuite) TestWishlistToVOCarriesAuditFields() {
 	assert.Equal(suite.T(), got.UpdatedAt, vo.UpdatedAt)
 	assert.Equal(suite.T(), userID, vo.CreatedBy)
 	assert.Equal(suite.T(), userID, vo.UpdatedBy)
+}
+
+func (suite *WishlistTestSuite) TestAddWishlistEntryStoresVolumeTitle() {
+	ctx := context.Background()
+	userID := primitive.NewObjectID().Hex()
+
+	wl, err := CreateWishlist(ctx, userID, "Titled", userID)
+	assert.NoError(suite.T(), err)
+
+	updated, err := AddWishlistEntry(ctx, wl.ID, userID, "vol-1", "Pathfinder Core", userID)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "Pathfinder Core", updated.Entries[0].VolumeTitle)
+
+	read, err := GetWishlist(ctx, wl.ID)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "Pathfinder Core", read.Entries[0].VolumeTitle)
+
+	vo := WishlistToVO(read, userID, false, false)
+	assert.Equal(suite.T(), "Pathfinder Core", vo.Entries[0].VolumeTitle)
+}
+
+func (suite *WishlistTestSuite) TestUpdateWishlistEntryTitleByVolume() {
+	ctx := context.Background()
+	target := "vol-shared"
+	other := "vol-other"
+
+	changed := []string{primitive.NewObjectID().Hex(), primitive.NewObjectID().Hex()}
+	for _, uid := range changed {
+		wl, err := CreateWishlist(ctx, uid, "L", uid)
+		assert.NoError(suite.T(), err)
+		_, err = AddWishlistEntry(ctx, wl.ID, uid, target, "Old Title", uid)
+		assert.NoError(suite.T(), err)
+	}
+	untouched := primitive.NewObjectID().Hex()
+	uwl, err := CreateWishlist(ctx, untouched, "K", untouched)
+	assert.NoError(suite.T(), err)
+	_, err = AddWishlistEntry(ctx, uwl.ID, untouched, other, "Keep Me", untouched)
+	assert.NoError(suite.T(), err)
+
+	got, err := UpdateWishlistEntryTitleByVolume(ctx, target, "New Title")
+	assert.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(), changed, got)
+
+	// read-your-write: the refreshed title is visible through the same Query wrapper the
+	// consumer's cache invalidation reads back with.
+	for _, uid := range changed {
+		wls, err := ListWishlistsByUser(ctx, uid)
+		assert.NoError(suite.T(), err)
+		assert.Equal(suite.T(), "New Title", wls[0].Entries[0].VolumeTitle)
+		assert.Equal(suite.T(), SystemActor, wls[0].UpdatedBy)
+	}
+	uwls, err := ListWishlistsByUser(ctx, untouched)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "Keep Me", uwls[0].Entries[0].VolumeTitle)
+
+	again, err := UpdateWishlistEntryTitleByVolume(ctx, target, "New Title")
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), again)
+}
+
+func (suite *WishlistTestSuite) TestUpdateWishlistEntryTitleByVolumeNoReferences() {
+	ctx := context.Background()
+
+	got, err := UpdateWishlistEntryTitleByVolume(ctx, "vol-nobody-has", "Whatever")
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), got)
 }
 
 func TestWishlistTestSuite(t *testing.T) {

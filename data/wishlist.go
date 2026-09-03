@@ -96,8 +96,9 @@ func replaceWishlist(c context.Context, wl *models.Wishlist, actingUserID string
 }
 
 // AddWishlistEntry links a catalog volume into a wishlist owned by ownerUserID. A no-op if the
-// volume is already present.
-func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID, actingUserID string) (*models.Wishlist, error) {
+// volume is already present. volumeTitle is a denormalized snapshot of the volume's title at add
+// time (mirrors LibraryEntry) so entries can be displayed without a catalog lookup.
+func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID, volumeTitle, actingUserID string) (*models.Wishlist, error) {
 	wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
 	if err != nil || wl == nil {
 		return wl, err
@@ -107,11 +108,50 @@ func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID, acti
 			return wl, nil
 		}
 	}
-	wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID, AddedAt: time.Now()})
+	wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID, VolumeTitle: volumeTitle, AddedAt: time.Now()})
 	if err := replaceWishlist(c, wl, actingUserID); err != nil {
 		return nil, err
 	}
 	return wl, nil
+}
+
+// UpdateWishlistEntryTitleByVolume refreshes the denormalized volume-title snapshot on every
+// wishlist entry across all users that references volumeID, and returns the IDs of the users
+// whose wishlists actually changed. Like the library equivalent this is driven by a trusted
+// catalog volume.updated event, not a user request, so it deliberately spans all owners.
+// Idempotent: a replay with an unchanged title matches no entries and returns an empty slice.
+func UpdateWishlistEntryTitleByVolume(c context.Context, volumeID, volumeTitle string) ([]string, error) {
+	stale, err := database.Query[models.Wishlist](wishlistCollection, live(bson.D{
+		{Key: "entries", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
+			{Key: "volume_id", Value: volumeID},
+			{Key: "volume_title", Value: bson.D{{Key: "$ne", Value: volumeTitle}}},
+		}}}},
+	}), nil, nil, 0, 0)
+	if err != nil {
+		logging.Logger.Error("Error while querying wishlists for volume title sync", "volumeID", volumeID, "error", err)
+		return nil, err
+	}
+	if len(stale) == 0 {
+		return []string{}, nil
+	}
+
+	// ponytail: whole-document replace per affected wishlist, mirroring
+	// UpdateLibraryEntryTitleByVolume. This is also the read-your-write-safe choice for an
+	// embedded-array field update - a positional-array $set through the Query wrapper has
+	// returned stale reads before (see game-room platform notes).
+	userIDs := make([]string, 0, len(stale))
+	for _, wl := range stale {
+		for i := range wl.Entries {
+			if wl.Entries[i].VolumeID == volumeID {
+				wl.Entries[i].VolumeTitle = volumeTitle
+			}
+		}
+		if err := replaceWishlist(c, wl, SystemActor); err != nil {
+			return nil, err
+		}
+		userIDs = append(userIDs, wl.UserID)
+	}
+	return userIDs, nil
 }
 
 // RemoveWishlistEntry unlinks a catalog volume from a wishlist owned by ownerUserID.
@@ -154,7 +194,7 @@ func WishlistToVO(wl *models.Wishlist, viewerID string, isFriend, isFriendOfFrie
 
 	entries := make([]vo.WishlistEntryVO, 0, len(wl.Entries))
 	for _, e := range wl.Entries {
-		entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID, AddedAt: e.AddedAt})
+		entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID, VolumeTitle: e.VolumeTitle, AddedAt: e.AddedAt})
 	}
 
 	return &vo.WishlistVO{
