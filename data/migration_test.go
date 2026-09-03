@@ -75,6 +75,46 @@ func (suite *MigrationTestSuite) TestMigrateWishlistNamesSafeToRunTwice() {
 	assert.Equal(suite.T(), DefaultWishlistName, got.Name)
 }
 
+// preSidecarTable mirrors a table document written before the volume_titles sidecar existed.
+type preSidecarTable struct {
+	ID        string    `bson:"_id"`
+	UserID    string    `bson:"user_id"`
+	VolumeIDs []string  `bson:"volume_ids"`
+	CreatedAt time.Time `bson:"created_at"`
+}
+
+func (suite *MigrationTestSuite) TestMigrateTableVolumeTitlesBackfillsMissing() {
+	ctx := context.Background()
+
+	old := preSidecarTable{ID: primitive.NewObjectID().Hex(), UserID: primitive.NewObjectID().Hex(), VolumeIDs: []string{"vol-1"}, CreatedAt: time.Now()}
+	_, err := database.Insert(tableCollection, old)
+	assert.NoError(suite.T(), err)
+
+	modified, err := MigrateTableVolumeTitles(ctx)
+	assert.NoError(suite.T(), err)
+	assert.GreaterOrEqual(suite.T(), modified, 1)
+
+	got, err := GetTable(ctx, old.ID)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), got.VolumeTitles)
+	assert.Len(suite.T(), got.VolumeTitles, 0)
+}
+
+func (suite *MigrationTestSuite) TestMigrateTableVolumeTitlesSafeToRunTwice() {
+	ctx := context.Background()
+
+	old := preSidecarTable{ID: primitive.NewObjectID().Hex(), UserID: primitive.NewObjectID().Hex(), VolumeIDs: []string{"vol-1"}, CreatedAt: time.Now()}
+	_, err := database.Insert(tableCollection, old)
+	assert.NoError(suite.T(), err)
+
+	_, err = MigrateTableVolumeTitles(ctx)
+	assert.NoError(suite.T(), err)
+
+	secondPass, err := MigrateTableVolumeTitles(ctx)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), 0, secondPass)
+}
+
 func TestMigrationTestSuite(t *testing.T) {
 	suite.Run(t, new(MigrationTestSuite))
 }

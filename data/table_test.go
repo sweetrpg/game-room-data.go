@@ -111,6 +111,83 @@ func (suite *TableTestSuite) TestTableToVOCarriesAuditFields() {
 	assert.Equal(suite.T(), userID, vo.UpdatedBy)
 }
 
+func (suite *TableTestSuite) TestAddTableVolumeStoresTitleSidecar() {
+	ctx := context.Background()
+	userID := primitive.NewObjectID().Hex()
+
+	tbl, err := CreateTable(ctx, userID, "Sidecar", userID)
+	assert.NoError(suite.T(), err)
+
+	// add with a title -> sidecar has it
+	updated, err := AddTableVolume(ctx, tbl.ID, userID, "vol-1", "Pathfinder Core", userID)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "Pathfinder Core", updated.VolumeTitles["vol-1"])
+
+	// add with an empty title -> no sidecar entry
+	updated, err = AddTableVolume(ctx, tbl.ID, userID, "vol-2", "", userID)
+	assert.NoError(suite.T(), err)
+	_, present := updated.VolumeTitles["vol-2"]
+	assert.False(suite.T(), present)
+
+	// remove -> key gone, volume ID gone
+	updated, err = RemoveTableVolume(ctx, tbl.ID, userID, "vol-1", userID)
+	assert.NoError(suite.T(), err)
+	_, present = updated.VolumeTitles["vol-1"]
+	assert.False(suite.T(), present)
+	assert.NotContains(suite.T(), updated.VolumeIDs, "vol-1")
+
+	read, err := GetTable(ctx, tbl.ID)
+	assert.NoError(suite.T(), err)
+	vo := TableToVO(read, userID, false, false)
+	assert.NotContains(suite.T(), vo.VolumeTitles, "vol-1")
+}
+
+func (suite *TableTestSuite) TestUpdateTableVolumeTitleByVolume() {
+	ctx := context.Background()
+	target := "vol-shared"
+	other := "vol-other"
+
+	changed := []string{primitive.NewObjectID().Hex(), primitive.NewObjectID().Hex()}
+	for _, uid := range changed {
+		tbl, err := CreateTable(ctx, uid, "T", uid)
+		assert.NoError(suite.T(), err)
+		_, err = AddTableVolume(ctx, tbl.ID, uid, target, "Old Title", uid)
+		assert.NoError(suite.T(), err)
+	}
+	untouched := primitive.NewObjectID().Hex()
+	utbl, err := CreateTable(ctx, untouched, "U", untouched)
+	assert.NoError(suite.T(), err)
+	_, err = AddTableVolume(ctx, utbl.ID, untouched, other, "Keep Me", untouched)
+	assert.NoError(suite.T(), err)
+
+	got, err := UpdateTableVolumeTitleByVolume(ctx, target, "New Title")
+	assert.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(), changed, got)
+
+	for _, uid := range changed {
+		tbls, err := ListTablesByUser(ctx, uid)
+		assert.NoError(suite.T(), err)
+		assert.Equal(suite.T(), "New Title", tbls[0].VolumeTitles[target])
+		assert.Equal(suite.T(), SystemActor, tbls[0].UpdatedBy)
+	}
+	utbls, err := ListTablesByUser(ctx, untouched)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "Keep Me", utbls[0].VolumeTitles[other])
+
+	// replay with the same title is a no-op
+	again, err := UpdateTableVolumeTitleByVolume(ctx, target, "New Title")
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), again)
+}
+
+func (suite *TableTestSuite) TestUpdateTableVolumeTitleByVolumeSkipsDottedVolumeID() {
+	ctx := context.Background()
+
+	got, err := UpdateTableVolumeTitleByVolume(ctx, "bad.id", "Whatever")
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), got)
+}
+
 func TestTableTestSuite(t *testing.T) {
 	suite.Run(t, new(TableTestSuite))
 }

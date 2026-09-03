@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/sweetrpg/common.go/logging"
@@ -101,8 +102,10 @@ func SetTableVisibility(c context.Context, id, ownerUserID string, visibility mo
 }
 
 // AddTableVolume links a catalog volume into a table owned by ownerUserID. A no-op if already
-// present.
-func AddTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID string) (*models.Table, error) {
+// present. volumeTitle is a denormalized snapshot of the volume's title at add time, stored in
+// the VolumeTitles sidecar so the volume can be displayed without a catalog lookup; an empty
+// title leaves no sidecar entry.
+func AddTableVolume(c context.Context, id, ownerUserID, volumeID, volumeTitle, actingUserID string) (*models.Table, error) {
 	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
 		return tbl, err
@@ -113,13 +116,20 @@ func AddTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID s
 		}
 	}
 	tbl.VolumeIDs = append(tbl.VolumeIDs, volumeID)
+	if volumeTitle != "" {
+		if tbl.VolumeTitles == nil {
+			tbl.VolumeTitles = map[string]string{}
+		}
+		tbl.VolumeTitles[volumeID] = volumeTitle
+	}
 	if err := replaceTable(c, tbl, actingUserID); err != nil {
 		return nil, err
 	}
 	return tbl, nil
 }
 
-// RemoveTableVolume unlinks a catalog volume from a table owned by ownerUserID.
+// RemoveTableVolume unlinks a catalog volume from a table owned by ownerUserID, dropping its
+// denormalized title sidecar entry along with it.
 func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID string) (*models.Table, error) {
 	tbl, err := getOwnedTable(c, id, ownerUserID)
 	if err != nil || tbl == nil {
@@ -132,10 +142,54 @@ func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserI
 		}
 	}
 	tbl.VolumeIDs = kept
+	delete(tbl.VolumeTitles, volumeID)
 	if err := replaceTable(c, tbl, actingUserID); err != nil {
 		return nil, err
 	}
 	return tbl, nil
+}
+
+// UpdateTableVolumeTitleByVolume refreshes the denormalized volume-title snapshot in the
+// VolumeTitles sidecar of every table across all users that references volumeID, and returns the
+// IDs of the users whose tables actually changed. Like the library equivalent this is driven by
+// a trusted catalog volume.updated event, not a user request, so it deliberately spans all
+// owners. Idempotent: a replay with an unchanged title matches no tables and returns an empty
+// slice. A volumeID containing "." is skipped (with a log) rather than written, since "." is not
+// a legal BSON map-key character - real volume IDs are hex ObjectIDs and never contain one.
+func UpdateTableVolumeTitleByVolume(c context.Context, volumeID, volumeTitle string) ([]string, error) {
+	if strings.Contains(volumeID, ".") {
+		logging.Logger.Warn("Skipping table volume-title sync for volume ID containing '.'", "volumeID", volumeID)
+		return []string{}, nil
+	}
+
+	stale, err := database.Query[models.Table](tableCollection, live(bson.D{
+		{Key: "volume_ids", Value: volumeID},
+		{Key: "volume_titles." + volumeID, Value: bson.D{{Key: "$ne", Value: volumeTitle}}},
+	}), nil, nil, 0, 0)
+	if err != nil {
+		logging.Logger.Error("Error while querying tables for volume title sync", "volumeID", volumeID, "error", err)
+		return nil, err
+	}
+	if len(stale) == 0 {
+		return []string{}, nil
+	}
+
+	// ponytail: one whole-document replace per affected table, mirroring
+	// UpdateLibraryEntryTitleByVolume - a volume retitle is a rare catalog event with a small
+	// fan-out, and this reuses replaceTable's audit stamping. Revisit with a bulk write if a
+	// single volume ever lands in tens of thousands of tables.
+	userIDs := make([]string, 0, len(stale))
+	for _, tbl := range stale {
+		if tbl.VolumeTitles == nil {
+			tbl.VolumeTitles = map[string]string{}
+		}
+		tbl.VolumeTitles[volumeID] = volumeTitle
+		if err := replaceTable(c, tbl, SystemActor); err != nil {
+			return nil, err
+		}
+		userIDs = append(userIDs, tbl.UserID)
+	}
+	return userIDs, nil
 }
 
 // DeleteTable soft-deletes a table owned by ownerUserID: it sets deleted_at/deleted_by via $set
@@ -160,11 +214,12 @@ func TableToVO(tbl *models.Table, viewerID string, isFriend, isFriendOfFriend bo
 	}
 
 	return &vo.TableVO{
-		ID:          tbl.ID,
-		UserID:      tbl.UserID,
-		Name:        tbl.Name,
-		VolumeIDs:   tbl.VolumeIDs,
-		Visibility:  string(tbl.Visibility),
-		AuditableVO: auditVO(tbl.Auditable),
+		ID:           tbl.ID,
+		UserID:       tbl.UserID,
+		Name:         tbl.Name,
+		VolumeIDs:    tbl.VolumeIDs,
+		VolumeTitles: tbl.VolumeTitles,
+		Visibility:   string(tbl.Visibility),
+		AuditableVO:  auditVO(tbl.Auditable),
 	}
 }
