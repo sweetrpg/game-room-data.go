@@ -57,19 +57,21 @@
 				
 				<option value="file0">github.com/sweetrpg/game-room-data.go/cmd/backfill-audit-fields/main.go (0.0%)</option>
 				
-				<option value="file1">github.com/sweetrpg/game-room-data.go/data/audit.go (100.0%)</option>
+				<option value="file1">github.com/sweetrpg/game-room-data.go/cmd/migrate-table-volume-titles/main.go (0.0%)</option>
 				
-				<option value="file2">github.com/sweetrpg/game-room-data.go/data/backfill.go (70.5%)</option>
+				<option value="file2">github.com/sweetrpg/game-room-data.go/data/audit.go (100.0%)</option>
 				
-				<option value="file3">github.com/sweetrpg/game-room-data.go/data/library.go (54.6%)</option>
+				<option value="file3">github.com/sweetrpg/game-room-data.go/data/backfill.go (70.5%)</option>
 				
-				<option value="file4">github.com/sweetrpg/game-room-data.go/data/migration.go (75.0%)</option>
+				<option value="file4">github.com/sweetrpg/game-room-data.go/data/library.go (54.6%)</option>
 				
-				<option value="file5">github.com/sweetrpg/game-room-data.go/data/table.go (41.1%)</option>
+				<option value="file5">github.com/sweetrpg/game-room-data.go/data/migration.go (75.0%)</option>
 				
-				<option value="file6">github.com/sweetrpg/game-room-data.go/data/visibility.go (100.0%)</option>
+				<option value="file6">github.com/sweetrpg/game-room-data.go/data/table.go (67.7%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-room-data.go/data/wishlist.go (71.8%)</option>
+				<option value="file7">github.com/sweetrpg/game-room-data.go/data/visibility.go (100.0%)</option>
+				
+				<option value="file8">github.com/sweetrpg/game-room-data.go/data/wishlist.go (74.4%)</option>
 				
 				</select>
 			</div>
@@ -137,7 +139,41 @@ func main() <span class="cov0" title="0">{
 }
 </pre>
 		
-		<pre class="file" id="file1" style="display: none">package data
+		<pre class="file" id="file1" style="display: none">// Command migrate-table-volume-titles ensures every game-room table document has a volume_titles
+// object, setting it to an empty object on documents that predate the denormalized-title
+// sidecar. It is structural only (populates no titles) and idempotent.
+//
+// Usage:
+//
+//        migrate-table-volume-titles
+//
+// Connection comes from the standard mongodb.go env vars (DB_URI, or DB_SCHEME/DB_HOST/... ).
+package main
+
+import (
+        "context"
+        "fmt"
+        "os"
+
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/game-room-data.go/data"
+        "github.com/sweetrpg/mongodb.go/database"
+)
+
+func main() <span class="cov0" title="0">{
+        logging.Init()
+        database.SetupDatabase()
+
+        count, err := data.MigrateTableVolumeTitles(context.Background())
+        if err != nil </span><span class="cov0" title="0">{
+                fmt.Fprintf(os.Stderr, "migrate-table-volume-titles failed: %v\n", err)
+                os.Exit(1)
+        }</span>
+        <span class="cov0" title="0">fmt.Printf("tables migrated: %d\n", count)</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package data
 
 import (
         "time"
@@ -154,7 +190,7 @@ const SystemActor = "system"
 
 // stampCreate sets all four create/update audit fields on a record being inserted, so a freshly
 // created document has created_at == updated_at and both *_by set to the acting user.
-func stampCreate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="27">{
+func stampCreate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="35">{
         a.CreatedAt = now
         a.CreatedBy = actingUserID
         a.UpdatedAt = now
@@ -162,13 +198,13 @@ func stampCreate(a *modelcore.Auditable, actingUserID string, now time.Time) <sp
 }</span>
 
 // stampUpdate advances updated_at/updated_by, leaving created_* untouched.
-func stampUpdate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="20">{
+func stampUpdate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="34">{
         a.UpdatedAt = now
         a.UpdatedBy = actingUserID
 }</span>
 
 // auditVO copies a model's audit block into its VO form for passthrough to the API response.
-func auditVO(a modelcore.Auditable) modelcorevo.AuditableVO <span class="cov3" title="3">{
+func auditVO(a modelcore.Auditable) modelcorevo.AuditableVO <span class="cov4" title="5">{
         return modelcorevo.AuditableVO{
                 CreatedAt: a.CreatedAt,
                 CreatedBy: a.CreatedBy,
@@ -183,7 +219,7 @@ func auditVO(a modelcore.Auditable) modelcorevo.AuditableVO <span class="cov3" t
 // {deleted_at: nil} matches both an absent field (docs not yet backfilled) and an explicit null
 // (live docs post-backfill). It copies rather than appending in place so a caller's slice is
 // never aliased or mutated.
-func live(filter bson.D) bson.D <span class="cov10" title="76">{
+func live(filter bson.D) bson.D <span class="cov10" title="114">{
         out := make(bson.D, len(filter), len(filter)+1)
         copy(out, filter)
         return append(out, bson.E{Key: "deleted_at", Value: nil})
@@ -201,7 +237,7 @@ func softDeleteSet(actingUserID string, now time.Time) bson.D <span class="cov4"
 }</span>
 </pre>
 		
-		<pre class="file" id="file2" style="display: none">package data
+		<pre class="file" id="file3" style="display: none">package data
 
 import (
         "context"
@@ -315,7 +351,7 @@ func backfillCollection(c context.Context, name string, dryRun bool) (Collection
 }
 </pre>
 		
-		<pre class="file" id="file3" style="display: none">package data
+		<pre class="file" id="file4" style="display: none">package data
 
 import (
         "context"
@@ -536,7 +572,7 @@ func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFrien
 }
 </pre>
 		
-		<pre class="file" id="file4" style="display: none">package data
+		<pre class="file" id="file5" style="display: none">package data
 
 import (
         "context"
@@ -566,12 +602,32 @@ func MigrateWishlistNames(c context.Context) (int, error) <span class="cov10" ti
         <span class="cov10" title="3">logging.Logger.Info("Migrated wishlist names", "count", result.ModifiedCount)
         return int(result.ModifiedCount), nil</span>
 }
+
+// MigrateTableVolumeTitles ensures every table document has a volume_titles object, setting it to
+// an empty object on any document that predates the denormalized-title sidecar. It is structural
+// only - it populates no titles; those fill in as volumes are re-added or as catalog
+// volume.updated events arrive. Safe to run more than once: a document that already has the
+// field matches nothing on a second pass.
+func MigrateTableVolumeTitles(c context.Context) (int, error) <span class="cov10" title="3">{
+        filter := bson.D{{Key: "volume_titles", Value: bson.D{{Key: "$exists", Value: false}}}}
+        update := bson.D{{Key: "$set", Value: bson.D{{Key: "volume_titles", Value: bson.D{}}}}}
+
+        result, err := database.Db.Collection(tableCollection).UpdateMany(c, filter, update)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while migrating table volume titles", "error", err)
+                return 0, err
+        }</span>
+
+        <span class="cov10" title="3">logging.Logger.Info("Migrated table volume titles", "count", result.ModifiedCount)
+        return int(result.ModifiedCount), nil</span>
+}
 </pre>
 		
-		<pre class="file" id="file5" style="display: none">package data
+		<pre class="file" id="file6" style="display: none">package data
 
 import (
         "context"
+        "strings"
         "time"
 
         "github.com/sweetrpg/common.go/logging"
@@ -585,63 +641,63 @@ import (
 // GetTable returns one table by ID, or nil if it doesn't exist or has been soft-deleted.
 // Unscoped by owner - only for read paths, which apply visibility filtering separately via
 // TableToVO/CanView. Write paths must use getOwnedTable instead.
-func GetTable(c context.Context, id string) (*models.Table, error) <span class="cov10" title="4">{
+func GetTable(c context.Context, id string) (*models.Table, error) <span class="cov8" title="6">{
         results, err := database.Query[models.Table](tableCollection, live(bson.D{{Key: "_id", Value: id}}), nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for table", "id", id, "error", err)
                 return nil, err
         }</span>
-        <span class="cov10" title="4">if len(results) == 0 </span><span class="cov1" title="1">{
+        <span class="cov8" title="6">if len(results) == 0 </span><span class="cov1" title="1">{
                 return nil, nil
         }</span>
-        <span class="cov8" title="3">return results[0], nil</span>
+        <span class="cov7" title="5">return results[0], nil</span>
 }
 
 // getOwnedTable returns the table only if it exists, is not soft-deleted, and is owned by
 // ownerUserID, via a single query filtered on both fields. Returns (nil, nil) both when the table
 // doesn't exist and when it's owned by someone else - callers needing to tell those apart (to
 // choose between a 403 and a 404 response) should follow up with GetTable.
-func getOwnedTable(c context.Context, id, ownerUserID string) (*models.Table, error) <span class="cov1" title="1">{
+func getOwnedTable(c context.Context, id, ownerUserID string) (*models.Table, error) <span class="cov8" title="7">{
         results, err := database.Query[models.Table](tableCollection, live(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}), nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for owned table", "id", id, "ownerUserID", ownerUserID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov1" title="1">if len(results) == 0 </span><span class="cov0" title="0">{
+        <span class="cov8" title="7">if len(results) == 0 </span><span class="cov0" title="0">{
                 return nil, nil
         }</span>
-        <span class="cov1" title="1">return results[0], nil</span>
+        <span class="cov8" title="7">return results[0], nil</span>
 }
 
 // ListTablesByUser returns every live table owned by the given user.
-func ListTablesByUser(c context.Context, userID string) ([]*models.Table, error) <span class="cov1" title="1">{
+func ListTablesByUser(c context.Context, userID string) ([]*models.Table, error) <span class="cov6" title="4">{
         results, err := database.Query[models.Table](tableCollection, live(bson.D{{Key: "user_id", Value: userID}}), nil, nil, 0, 0)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for tables", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov1" title="1">return results, nil</span>
+        <span class="cov6" title="4">return results, nil</span>
 }
 
 // CreateTable creates a new table, defaulting to private visibility per the "new tables default
 // to private" requirement. actingUserID is the caller stamped into the audit fields.
-func CreateTable(c context.Context, userID, name, actingUserID string) (*models.Table, error) <span class="cov10" title="4">{
+func CreateTable(c context.Context, userID, name, actingUserID string) (*models.Table, error) <span class="cov9" title="8">{
         tbl := models.NewTable(primitive.NewObjectID().Hex(), userID, name)
         stampCreate(&amp;tbl.Auditable, actingUserID, time.Now())
         if _, err := database.Insert(tableCollection, tbl); err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while inserting table", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov10" title="4">return &amp;tbl, nil</span>
+        <span class="cov9" title="8">return &amp;tbl, nil</span>
 }
 
-func replaceTable(c context.Context, tbl *models.Table, actingUserID string) error <span class="cov1" title="1">{
+func replaceTable(c context.Context, tbl *models.Table, actingUserID string) error <span class="cov10" title="9">{
         stampUpdate(&amp;tbl.Auditable, actingUserID, time.Now())
         _, err := database.Db.Collection(tableCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: tbl.ID}, {Key: "user_id", Value: tbl.UserID}}), tbl)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while replacing table", "id", tbl.ID, "error", err)
         }</span>
-        <span class="cov1" title="1">return err</span>
+        <span class="cov10" title="9">return err</span>
 }
 
 // UpdateTableName renames a table owned by ownerUserID.
@@ -671,48 +727,101 @@ func SetTableVisibility(c context.Context, id, ownerUserID string, visibility mo
 }
 
 // AddTableVolume links a catalog volume into a table owned by ownerUserID. A no-op if already
-// present.
-func AddTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID string) (*models.Table, error) <span class="cov0" title="0">{
+// present. volumeTitle is a denormalized snapshot of the volume's title at add time, stored in
+// the VolumeTitles sidecar so the volume can be displayed without a catalog lookup; an empty
+// title leaves no sidecar entry.
+func AddTableVolume(c context.Context, id, ownerUserID, volumeID, volumeTitle, actingUserID string) (*models.Table, error) <span class="cov7" title="5">{
         tbl, err := getOwnedTable(c, id, ownerUserID)
         if err != nil || tbl == nil </span><span class="cov0" title="0">{
                 return tbl, err
         }</span>
-        <span class="cov0" title="0">for _, v := range tbl.VolumeIDs </span><span class="cov0" title="0">{
+        <span class="cov7" title="5">for _, v := range tbl.VolumeIDs </span><span class="cov1" title="1">{
                 if v == volumeID </span><span class="cov0" title="0">{
                         return tbl, nil
                 }</span>
         }
-        <span class="cov0" title="0">tbl.VolumeIDs = append(tbl.VolumeIDs, volumeID)
-        if err := replaceTable(c, tbl, actingUserID); err != nil </span><span class="cov0" title="0">{
+        <span class="cov7" title="5">tbl.VolumeIDs = append(tbl.VolumeIDs, volumeID)
+        if volumeTitle != "" </span><span class="cov6" title="4">{
+                if tbl.VolumeTitles == nil </span><span class="cov6" title="4">{
+                        tbl.VolumeTitles = map[string]string{}
+                }</span>
+                <span class="cov6" title="4">tbl.VolumeTitles[volumeID] = volumeTitle</span>
+        }
+        <span class="cov7" title="5">if err := replaceTable(c, tbl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov0" title="0">return tbl, nil</span>
+        <span class="cov7" title="5">return tbl, nil</span>
 }
 
-// RemoveTableVolume unlinks a catalog volume from a table owned by ownerUserID.
-func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID string) (*models.Table, error) <span class="cov0" title="0">{
+// RemoveTableVolume unlinks a catalog volume from a table owned by ownerUserID, dropping its
+// denormalized title sidecar entry along with it.
+func RemoveTableVolume(c context.Context, id, ownerUserID, volumeID, actingUserID string) (*models.Table, error) <span class="cov1" title="1">{
         tbl, err := getOwnedTable(c, id, ownerUserID)
         if err != nil || tbl == nil </span><span class="cov0" title="0">{
                 return tbl, err
         }</span>
-        <span class="cov0" title="0">kept := tbl.VolumeIDs[:0]
-        for _, v := range tbl.VolumeIDs </span><span class="cov0" title="0">{
-                if v != volumeID </span><span class="cov0" title="0">{
+        <span class="cov1" title="1">kept := tbl.VolumeIDs[:0]
+        for _, v := range tbl.VolumeIDs </span><span class="cov3" title="2">{
+                if v != volumeID </span><span class="cov1" title="1">{
                         kept = append(kept, v)
                 }</span>
         }
-        <span class="cov0" title="0">tbl.VolumeIDs = kept
+        <span class="cov1" title="1">tbl.VolumeIDs = kept
+        delete(tbl.VolumeTitles, volumeID)
         if err := replaceTable(c, tbl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov0" title="0">return tbl, nil</span>
+        <span class="cov1" title="1">return tbl, nil</span>
+}
+
+// UpdateTableVolumeTitleByVolume refreshes the denormalized volume-title snapshot in the
+// VolumeTitles sidecar of every table across all users that references volumeID, and returns the
+// IDs of the users whose tables actually changed. Like the library equivalent this is driven by
+// a trusted catalog volume.updated event, not a user request, so it deliberately spans all
+// owners. Idempotent: a replay with an unchanged title matches no tables and returns an empty
+// slice. A volumeID containing "." is skipped (with a log) rather than written, since "." is not
+// a legal BSON map-key character - real volume IDs are hex ObjectIDs and never contain one.
+func UpdateTableVolumeTitleByVolume(c context.Context, volumeID, volumeTitle string) ([]string, error) <span class="cov5" title="3">{
+        if strings.Contains(volumeID, ".") </span><span class="cov1" title="1">{
+                logging.Logger.Warn("Skipping table volume-title sync for volume ID containing '.'", "volumeID", volumeID)
+                return []string{}, nil
+        }</span>
+
+        <span class="cov3" title="2">stale, err := database.Query[models.Table](tableCollection, live(bson.D{
+                {Key: "volume_ids", Value: volumeID},
+                {Key: "volume_titles." + volumeID, Value: bson.D{{Key: "$ne", Value: volumeTitle}}},
+        }), nil, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying tables for volume title sync", "volumeID", volumeID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov3" title="2">if len(stale) == 0 </span><span class="cov1" title="1">{
+                return []string{}, nil
+        }</span>
+
+        // ponytail: one whole-document replace per affected table, mirroring
+        // UpdateLibraryEntryTitleByVolume - a volume retitle is a rare catalog event with a small
+        // fan-out, and this reuses replaceTable's audit stamping. Revisit with a bulk write if a
+        // single volume ever lands in tens of thousands of tables.
+        <span class="cov1" title="1">userIDs := make([]string, 0, len(stale))
+        for _, tbl := range stale </span><span class="cov3" title="2">{
+                if tbl.VolumeTitles == nil </span><span class="cov0" title="0">{
+                        tbl.VolumeTitles = map[string]string{}
+                }</span>
+                <span class="cov3" title="2">tbl.VolumeTitles[volumeID] = volumeTitle
+                if err := replaceTable(c, tbl, SystemActor); err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov3" title="2">userIDs = append(userIDs, tbl.UserID)</span>
+        }
+        <span class="cov1" title="1">return userIDs, nil</span>
 }
 
 // DeleteTable soft-deletes a table owned by ownerUserID: it sets deleted_at/deleted_by via $set
 // rather than removing the document. Returns whether a live document was actually marked, so
 // callers can tell "not found" (or already deleted) apart from "found but not owned by
 // ownerUserID".
-func DeleteTable(c context.Context, id, ownerUserID, actingUserID string) (bool, error) <span class="cov5" title="2">{
+func DeleteTable(c context.Context, id, ownerUserID, actingUserID string) (bool, error) <span class="cov3" title="2">{
         result, err := database.Db.Collection(tableCollection).UpdateOne(c,
                 live(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}),
                 softDeleteSet(actingUserID, time.Now()))
@@ -720,27 +829,28 @@ func DeleteTable(c context.Context, id, ownerUserID, actingUserID string) (bool,
                 logging.Logger.Error("Error while deleting table", "id", id, "error", err)
                 return false, err
         }</span>
-        <span class="cov5" title="2">return result.ModifiedCount &gt; 0, nil</span>
+        <span class="cov3" title="2">return result.ModifiedCount &gt; 0, nil</span>
 }
 
 // TableToVO converts a table model into its VO, or nil if viewerID may not see it at all.
-func TableToVO(tbl *models.Table, viewerID string, isFriend, isFriendOfFriend bool) *vo.TableVO <span class="cov1" title="1">{
+func TableToVO(tbl *models.Table, viewerID string, isFriend, isFriendOfFriend bool) *vo.TableVO <span class="cov3" title="2">{
         if !CanView(tbl.Visibility, tbl.UserID, viewerID, isFriend, isFriendOfFriend) </span><span class="cov0" title="0">{
                 return nil
         }</span>
 
-        <span class="cov1" title="1">return &amp;vo.TableVO{
-                ID:          tbl.ID,
-                UserID:      tbl.UserID,
-                Name:        tbl.Name,
-                VolumeIDs:   tbl.VolumeIDs,
-                Visibility:  string(tbl.Visibility),
-                AuditableVO: auditVO(tbl.Auditable),
+        <span class="cov3" title="2">return &amp;vo.TableVO{
+                ID:           tbl.ID,
+                UserID:       tbl.UserID,
+                Name:         tbl.Name,
+                VolumeIDs:    tbl.VolumeIDs,
+                VolumeTitles: tbl.VolumeTitles,
+                Visibility:   string(tbl.Visibility),
+                AuditableVO:  auditVO(tbl.Auditable),
         }</span>
 }
 </pre>
 		
-		<pre class="file" id="file6" style="display: none">package data
+		<pre class="file" id="file7" style="display: none">package data
 
 import "github.com/sweetrpg/game-room-objects.go/models"
 
@@ -748,8 +858,8 @@ import "github.com/sweetrpg/game-room-objects.go/models"
 // Friendship isn't implemented yet, so callers always pass isFriend/isFriendOfFriend as false -
 // this is the single code path that will start returning real friend-scoped results once
 // friendship ships, per design.md.
-func CanView(vis models.Visibility, ownerID, viewerID string, isFriend, isFriendOfFriend bool) bool <span class="cov10" title="13">{
-        if viewerID != "" &amp;&amp; viewerID == ownerID </span><span class="cov5" title="4">{
+func CanView(vis models.Visibility, ownerID, viewerID string, isFriend, isFriendOfFriend bool) bool <span class="cov10" title="15">{
+        if viewerID != "" &amp;&amp; viewerID == ownerID </span><span class="cov6" title="6">{
                 return true
         }</span>
 
@@ -782,7 +892,7 @@ func PreviewLibraryDefaultChange(lib *models.Library, newDefault models.Visibili
 }
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">package data
+		<pre class="file" id="file8" style="display: none">package data
 
 import (
         "context"
@@ -800,59 +910,59 @@ import (
 // GetWishlist returns one wishlist by ID, or nil if it doesn't exist or has been soft-deleted.
 // Unscoped by owner - only for read paths, which apply visibility filtering separately via
 // WishlistToVO/CanView. Write paths must use getOwnedWishlist instead.
-func GetWishlist(c context.Context, id string) (*models.Wishlist, error) <span class="cov9" title="11">{
+func GetWishlist(c context.Context, id string) (*models.Wishlist, error) <span class="cov8" title="12">{
         results, err := database.Query[models.Wishlist](wishlistCollection, live(bson.D{{Key: "_id", Value: id}}), nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for wishlist", "id", id, "error", err)
                 return nil, err
         }</span>
-        <span class="cov9" title="11">if len(results) == 0 </span><span class="cov1" title="1">{
+        <span class="cov8" title="12">if len(results) == 0 </span><span class="cov1" title="1">{
                 return nil, nil
         }</span>
-        <span class="cov8" title="10">return results[0], nil</span>
+        <span class="cov8" title="11">return results[0], nil</span>
 }
 
 // getOwnedWishlist returns the wishlist only if it exists, is not soft-deleted, and is owned by
 // ownerUserID, via a single query filtered on both fields. Returns (nil, nil) both when the
 // wishlist doesn't exist and when it's owned by someone else - callers needing to tell those
 // apart (to choose between a 403 and a 404 response) should follow up with GetWishlist.
-func getOwnedWishlist(c context.Context, id, ownerUserID string) (*models.Wishlist, error) <span class="cov7" title="6">{
+func getOwnedWishlist(c context.Context, id, ownerUserID string) (*models.Wishlist, error) <span class="cov8" title="10">{
         results, err := database.Query[models.Wishlist](wishlistCollection, live(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: ownerUserID}}), nil, nil, 0, 1)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for owned wishlist", "id", id, "ownerUserID", ownerUserID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov7" title="6">if len(results) == 0 </span><span class="cov3" title="2">{
+        <span class="cov8" title="10">if len(results) == 0 </span><span class="cov3" title="2">{
                 return nil, nil
         }</span>
-        <span class="cov5" title="4">return results[0], nil</span>
+        <span class="cov7" title="8">return results[0], nil</span>
 }
 
 // ListWishlistsByUser returns every live wishlist owned by the given user.
-func ListWishlistsByUser(c context.Context, userID string) ([]*models.Wishlist, error) <span class="cov3" title="2">{
+func ListWishlistsByUser(c context.Context, userID string) ([]*models.Wishlist, error) <span class="cov6" title="5">{
         results, err := database.Query[models.Wishlist](wishlistCollection, live(bson.D{{Key: "user_id", Value: userID}}), nil, nil, 0, 0)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while querying database for wishlists", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov3" title="2">return results, nil</span>
+        <span class="cov6" title="5">return results, nil</span>
 }
 
 // CreateWishlist creates a new named wishlist, defaulting to private visibility per the "new
 // wishlists default to private" requirement. actingUserID is the caller stamped into the audit
 // fields.
-func CreateWishlist(c context.Context, userID, name, actingUserID string) (*models.Wishlist, error) <span class="cov10" title="14">{
+func CreateWishlist(c context.Context, userID, name, actingUserID string) (*models.Wishlist, error) <span class="cov10" title="18">{
         if name == "" </span><span class="cov1" title="1">{
                 return nil, fmt.Errorf("wishlist name must not be empty")
         }</span>
 
-        <span class="cov9" title="13">wl := models.NewWishlist(primitive.NewObjectID().Hex(), userID, name)
+        <span class="cov9" title="17">wl := models.NewWishlist(primitive.NewObjectID().Hex(), userID, name)
         stampCreate(&amp;wl.Auditable, actingUserID, time.Now())
         if _, err := database.Insert(wishlistCollection, wl); err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while inserting wishlist", "userID", userID, "error", err)
                 return nil, err
         }</span>
-        <span class="cov9" title="13">return &amp;wl, nil</span>
+        <span class="cov9" title="17">return &amp;wl, nil</span>
 }
 
 // DeleteWishlist soft-deletes a wishlist owned by ownerUserID: it sets deleted_at/deleted_by via
@@ -870,32 +980,72 @@ func DeleteWishlist(c context.Context, id, ownerUserID, actingUserID string) (bo
         <span class="cov4" title="3">return result.ModifiedCount &gt; 0, nil</span>
 }
 
-func replaceWishlist(c context.Context, wl *models.Wishlist, actingUserID string) error <span class="cov5" title="4">{
+func replaceWishlist(c context.Context, wl *models.Wishlist, actingUserID string) error <span class="cov8" title="10">{
         stampUpdate(&amp;wl.Auditable, actingUserID, time.Now())
         _, err := database.Db.Collection(wishlistCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: wl.ID}, {Key: "user_id", Value: wl.UserID}}), wl)
         if err != nil </span><span class="cov0" title="0">{
                 logging.Logger.Error("Error while replacing wishlist", "id", wl.ID, "error", err)
         }</span>
-        <span class="cov5" title="4">return err</span>
+        <span class="cov8" title="10">return err</span>
 }
 
 // AddWishlistEntry links a catalog volume into a wishlist owned by ownerUserID. A no-op if the
-// volume is already present.
-func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID, actingUserID string) (*models.Wishlist, error) <span class="cov3" title="2">{
+// volume is already present. volumeTitle is a denormalized snapshot of the volume's title at add
+// time (mirrors LibraryEntry) so entries can be displayed without a catalog lookup.
+func AddWishlistEntry(c context.Context, wishlistID, ownerUserID, volumeID, volumeTitle, actingUserID string) (*models.Wishlist, error) <span class="cov6" title="6">{
         wl, err := getOwnedWishlist(c, wishlistID, ownerUserID)
         if err != nil || wl == nil </span><span class="cov1" title="1">{
                 return wl, err
         }</span>
-        <span class="cov1" title="1">for _, e := range wl.Entries </span><span class="cov0" title="0">{
+        <span class="cov6" title="5">for _, e := range wl.Entries </span><span class="cov0" title="0">{
                 if e.VolumeID == volumeID </span><span class="cov0" title="0">{
                         return wl, nil
                 }</span>
         }
-        <span class="cov1" title="1">wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID, AddedAt: time.Now()})
+        <span class="cov6" title="5">wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: volumeID, VolumeTitle: volumeTitle, AddedAt: time.Now()})
         if err := replaceWishlist(c, wl, actingUserID); err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov1" title="1">return wl, nil</span>
+        <span class="cov6" title="5">return wl, nil</span>
+}
+
+// UpdateWishlistEntryTitleByVolume refreshes the denormalized volume-title snapshot on every
+// wishlist entry across all users that references volumeID, and returns the IDs of the users
+// whose wishlists actually changed. Like the library equivalent this is driven by a trusted
+// catalog volume.updated event, not a user request, so it deliberately spans all owners.
+// Idempotent: a replay with an unchanged title matches no entries and returns an empty slice.
+func UpdateWishlistEntryTitleByVolume(c context.Context, volumeID, volumeTitle string) ([]string, error) <span class="cov4" title="3">{
+        stale, err := database.Query[models.Wishlist](wishlistCollection, live(bson.D{
+                {Key: "entries", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
+                        {Key: "volume_id", Value: volumeID},
+                        {Key: "volume_title", Value: bson.D{{Key: "$ne", Value: volumeTitle}}},
+                }}}},
+        }), nil, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying wishlists for volume title sync", "volumeID", volumeID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov4" title="3">if len(stale) == 0 </span><span class="cov3" title="2">{
+                return []string{}, nil
+        }</span>
+
+        // ponytail: whole-document replace per affected wishlist, mirroring
+        // UpdateLibraryEntryTitleByVolume. This is also the read-your-write-safe choice for an
+        // embedded-array field update - a positional-array $set through the Query wrapper has
+        // returned stale reads before (see game-room platform notes).
+        <span class="cov1" title="1">userIDs := make([]string, 0, len(stale))
+        for _, wl := range stale </span><span class="cov3" title="2">{
+                for i := range wl.Entries </span><span class="cov3" title="2">{
+                        if wl.Entries[i].VolumeID == volumeID </span><span class="cov3" title="2">{
+                                wl.Entries[i].VolumeTitle = volumeTitle
+                        }</span>
+                }
+                <span class="cov3" title="2">if err := replaceWishlist(c, wl, SystemActor); err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov3" title="2">userIDs = append(userIDs, wl.UserID)</span>
+        }
+        <span class="cov1" title="1">return userIDs, nil</span>
 }
 
 // RemoveWishlistEntry unlinks a catalog volume from a wishlist owned by ownerUserID.
@@ -931,17 +1081,17 @@ func SetWishlistVisibility(c context.Context, wishlistID, ownerUserID string, vi
 }
 
 // WishlistToVO converts a wishlist model into its VO, or nil if viewerID may not see it at all.
-func WishlistToVO(wl *models.Wishlist, viewerID string, isFriend, isFriendOfFriend bool) *vo.WishlistVO <span class="cov1" title="1">{
+func WishlistToVO(wl *models.Wishlist, viewerID string, isFriend, isFriendOfFriend bool) *vo.WishlistVO <span class="cov3" title="2">{
         if !CanView(wl.Visibility, wl.UserID, viewerID, isFriend, isFriendOfFriend) </span><span class="cov0" title="0">{
                 return nil
         }</span>
 
-        <span class="cov1" title="1">entries := make([]vo.WishlistEntryVO, 0, len(wl.Entries))
-        for _, e := range wl.Entries </span><span class="cov0" title="0">{
-                entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID, AddedAt: e.AddedAt})
+        <span class="cov3" title="2">entries := make([]vo.WishlistEntryVO, 0, len(wl.Entries))
+        for _, e := range wl.Entries </span><span class="cov1" title="1">{
+                entries = append(entries, vo.WishlistEntryVO{VolumeID: e.VolumeID, VolumeTitle: e.VolumeTitle, AddedAt: e.AddedAt})
         }</span>
 
-        <span class="cov1" title="1">return &amp;vo.WishlistVO{
+        <span class="cov3" title="2">return &amp;vo.WishlistVO{
                 ID:          wl.ID,
                 UserID:      wl.UserID,
                 Name:        wl.Name,
