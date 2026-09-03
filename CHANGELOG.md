@@ -1,3 +1,14 @@
+
+## 0.6.0 - 2026-09-03
+
+### Added
+- Denormalized volume title on table volumes and wishlist entries
+
+
+### Fixed
+- Live() copies its input; replaceLibrary scopes by owner
+
+
 ## 0.4.0 - 2026-08-30
 
 ### Added
