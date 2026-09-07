@@ -8,6 +8,7 @@ import (
 	"github.com/sweetrpg/common.go/logging"
 	"github.com/sweetrpg/game-room-objects.go/models"
 	"github.com/sweetrpg/game-room-objects.go/vo"
+	modelcore "github.com/sweetrpg/model-core.go/models"
 	"github.com/sweetrpg/mongodb.go/database"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -183,7 +184,7 @@ func UpdateLibraryEntryTitleByVolume(c context.Context, volumeID, volumeTitle st
 				lib.Entries[i].VolumeTitle = volumeTitle
 			}
 		}
-		if err := replaceLibrary(c, lib, SystemActor); err != nil {
+		if err := replaceLibrary(c, lib, modelcore.SystemActor); err != nil {
 			return nil, err
 		}
 		userIDs = append(userIDs, lib.UserID)

@@ -22,6 +22,8 @@ github.com/sweetrpg/game-room-objects.go v0.2.2 h1:qJBLZRgfu4gu8qW67UiZwFwybklaX
 github.com/sweetrpg/game-room-objects.go v0.2.2/go.mod h1:az0qPJQp3aYUI6h6AB/qws0sFvmCWdwDrVDj4YcYyXY=
 github.com/sweetrpg/model-core.go v0.0.173 h1:mIZ4z0ETkCH7I3Az0jwTFOyh66OTm7Z4/f0Rx/w+5Fk=
 github.com/sweetrpg/model-core.go v0.0.173/go.mod h1:8L1qsYxAhEe/nx5yUxvaosPtpRlUnLuXj+GI76zpQok=
+github.com/sweetrpg/model-core.go v0.1.0 h1:ac8kdyj7oLN706JYyUvMB4T0HRkq9gmzObn3YMUTqCo=
+github.com/sweetrpg/model-core.go v0.1.0/go.mod h1:aufDyXjagNyPQADwa6INTv1OI/rIOSjTXtqkzcw1fgA=
 github.com/sweetrpg/mongodb.go v0.0.193 h1:9SvQK3QYftFP1GglMrMvBBlWbIAnSnjQ2Vg13uxQLkQ=
 github.com/sweetrpg/mongodb.go v0.0.193/go.mod h1:4+3gfWtpBHrMWNHrAL4th/hbn1Pq9eT8iLp5ocjs3pI=
 github.com/xdg-go/pbkdf2 v1.0.0 h1:Su7DPu48wXMwC3bs7MCNG+z4FhcyEuz5dlvchbq0B0c=

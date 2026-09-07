@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 	"github.com/sweetrpg/common.go/logging"
+	"github.com/sweetrpg/model-core.go/models"
 	"github.com/sweetrpg/mongodb.go/constants"
 	"github.com/sweetrpg/mongodb.go/database"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -151,7 +152,7 @@ func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleByVolume() {
 		assert.NoError(suite.T(), err)
 		assert.Equal(suite.T(), "New Title", lib.Entries[0].VolumeTitle)
 		// event-driven refresh stamps the system actor, not a user
-		assert.Equal(suite.T(), SystemActor, lib.UpdatedBy)
+		assert.Equal(suite.T(), models.SystemActor, lib.UpdatedBy)
 	}
 	otherLib, err := GetLibraryByUser(ctx, untouched)
 	assert.NoError(suite.T(), err)
