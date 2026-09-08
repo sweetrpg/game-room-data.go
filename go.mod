@@ -6,7 +6,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/sweetrpg/common.go v0.0.16
 	github.com/sweetrpg/game-room-objects.go v0.3.0
-	github.com/sweetrpg/model-core.go v0.0.173
+	github.com/sweetrpg/model-core.go v0.1.0
 	github.com/sweetrpg/mongodb.go v0.0.193
 	go.mongodb.org/mongo-driver v1.17.9
 )
