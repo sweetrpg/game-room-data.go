@@ -1,4 +1,16 @@
 
+## 0.7.0 - 2026-10-06
+
+### Added
+- Add owner-scoped loan data access
+
+
+### Fixed
+- Truncate ReturnedAt to millisecond precision
+- Use UTC for ReturnedAt, not just millisecond truncation
+
+
+
 ## 0.6.0 - 2026-09-03
 
 ### Added
