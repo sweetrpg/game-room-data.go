@@ -65,13 +65,15 @@
 				
 				<option value="file4">github.com/sweetrpg/game-room-data.go/data/library.go (54.6%)</option>
 				
-				<option value="file5">github.com/sweetrpg/game-room-data.go/data/migration.go (75.0%)</option>
+				<option value="file5">github.com/sweetrpg/game-room-data.go/data/loan.go (72.1%)</option>
 				
-				<option value="file6">github.com/sweetrpg/game-room-data.go/data/table.go (67.7%)</option>
+				<option value="file6">github.com/sweetrpg/game-room-data.go/data/migration.go (75.0%)</option>
 				
-				<option value="file7">github.com/sweetrpg/game-room-data.go/data/visibility.go (100.0%)</option>
+				<option value="file7">github.com/sweetrpg/game-room-data.go/data/table.go (67.7%)</option>
 				
-				<option value="file8">github.com/sweetrpg/game-room-data.go/data/wishlist.go (74.4%)</option>
+				<option value="file8">github.com/sweetrpg/game-room-data.go/data/visibility.go (100.0%)</option>
+				
+				<option value="file9">github.com/sweetrpg/game-room-data.go/data/wishlist.go (74.4%)</option>
 				
 				</select>
 			</div>
@@ -190,7 +192,7 @@ const SystemActor = "system"
 
 // stampCreate sets all four create/update audit fields on a record being inserted, so a freshly
 // created document has created_at == updated_at and both *_by set to the acting user.
-func stampCreate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="35">{
+func stampCreate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="43">{
         a.CreatedAt = now
         a.CreatedBy = actingUserID
         a.UpdatedAt = now
@@ -198,13 +200,13 @@ func stampCreate(a *modelcore.Auditable, actingUserID string, now time.Time) <sp
 }</span>
 
 // stampUpdate advances updated_at/updated_by, leaving created_* untouched.
-func stampUpdate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="34">{
+func stampUpdate(a *modelcore.Auditable, actingUserID string, now time.Time) <span class="cov7" title="37">{
         a.UpdatedAt = now
         a.UpdatedBy = actingUserID
 }</span>
 
 // auditVO copies a model's audit block into its VO form for passthrough to the API response.
-func auditVO(a modelcore.Auditable) modelcorevo.AuditableVO <span class="cov4" title="5">{
+func auditVO(a modelcore.Auditable) modelcorevo.AuditableVO <span class="cov3" title="5">{
         return modelcorevo.AuditableVO{
                 CreatedAt: a.CreatedAt,
                 CreatedBy: a.CreatedBy,
@@ -219,7 +221,7 @@ func auditVO(a modelcore.Auditable) modelcorevo.AuditableVO <span class="cov4" t
 // {deleted_at: nil} matches both an absent field (docs not yet backfilled) and an explicit null
 // (live docs post-backfill). It copies rather than appending in place so a caller's slice is
 // never aliased or mutated.
-func live(filter bson.D) bson.D <span class="cov10" title="114">{
+func live(filter bson.D) bson.D <span class="cov10" title="136">{
         out := make(bson.D, len(filter), len(filter)+1)
         copy(out, filter)
         return append(out, bson.E{Key: "deleted_at", Value: nil})
@@ -227,7 +229,7 @@ func live(filter bson.D) bson.D <span class="cov10" title="114">{
 
 // softDeleteSet is the $set document for a soft delete: marks the record deleted and advances
 // the update stamp in the same write.
-func softDeleteSet(actingUserID string, now time.Time) bson.D <span class="cov4" title="5">{
+func softDeleteSet(actingUserID string, now time.Time) bson.D <span class="cov4" title="7">{
         return bson.D{{Key: "$set", Value: bson.D{
                 {Key: "deleted_at", Value: now},
                 {Key: "deleted_by", Value: actingUserID},
@@ -576,6 +578,192 @@ func LibraryToVO(lib *models.Library, viewerID string, isFriend, isFriendOfFrien
 
 import (
         "context"
+        "errors"
+        "time"
+
+        "github.com/sweetrpg/common.go/logging"
+        "github.com/sweetrpg/game-room-objects.go/models"
+        "github.com/sweetrpg/game-room-objects.go/vo"
+        "github.com/sweetrpg/mongodb.go/database"
+        "go.mongodb.org/mongo-driver/bson"
+        "go.mongodb.org/mongo-driver/bson/primitive"
+)
+
+// ErrLoanBorrowerRequired is returned when a loan is created with neither a borrower user ID nor
+// a borrower name - a loan requires a borrower (design.md: XOR of the two, both stored).
+var ErrLoanBorrowerRequired = errors.New("loan requires a borrower_user_id or a borrower_name")
+
+// ErrLoanAlreadyOpen is returned when creating a loan would duplicate an existing open loan for
+// the same lender, volume, and borrower identity.
+var ErrLoanAlreadyOpen = errors.New("an open loan already exists for this lender, volume, and borrower")
+
+// ListLoansLentBy returns every live loan lent by the given user, lent and returned alike.
+func ListLoansLentBy(c context.Context, userID string) ([]*models.Loan, error) <span class="cov1" title="1">{
+        results, err := database.Query[models.Loan](loanCollection, live(bson.D{{Key: "lender_user_id", Value: userID}}), nil, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for loans lent by user", "userID", userID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov1" title="1">return results, nil</span>
+}
+
+// ListLoansBorrowedBy returns every live loan borrowed by the given platform-linked user, lent
+// and returned alike. Free-form borrowers have no user ID and so never appear here.
+func ListLoansBorrowedBy(c context.Context, userID string) ([]*models.Loan, error) <span class="cov1" title="1">{
+        results, err := database.Query[models.Loan](loanCollection, live(bson.D{{Key: "borrower_user_id", Value: userID}}), nil, nil, 0, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for loans borrowed by user", "userID", userID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov1" title="1">return results, nil</span>
+}
+
+// getOwnedLoan returns the loan only if it exists, is not soft-deleted, and is owned (lent) by
+// ownerUserID, via a single query filtered on both fields. Returns (nil, nil) both when the loan
+// doesn't exist and when it's owned by someone else - callers needing to tell those apart (to
+// choose between a 403 and a 404 response) should follow up with GetLoan.
+func getOwnedLoan(c context.Context, id, ownerUserID string) (*models.Loan, error) <span class="cov7" title="5">{
+        results, err := database.Query[models.Loan](loanCollection, live(bson.D{{Key: "_id", Value: id}, {Key: "lender_user_id", Value: ownerUserID}}), nil, nil, 0, 1)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for owned loan", "id", id, "ownerUserID", ownerUserID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov7" title="5">if len(results) == 0 </span><span class="cov1" title="1">{
+                return nil, nil
+        }</span>
+        <span class="cov6" title="4">return results[0], nil</span>
+}
+
+// GetLoan returns one loan by ID, or nil if it doesn't exist or has been soft-deleted. Unscoped
+// by owner - write paths must use getOwnedLoan instead.
+func GetLoan(c context.Context, id string) (*models.Loan, error) <span class="cov1" title="1">{
+        results, err := database.Query[models.Loan](loanCollection, live(bson.D{{Key: "_id", Value: id}}), nil, nil, 0, 1)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for loan", "id", id, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov1" title="1">if len(results) == 0 </span><span class="cov1" title="1">{
+                return nil, nil
+        }</span>
+        <span class="cov0" title="0">return results[0], nil</span>
+}
+
+// openLoanExists reports whether a live, still-open (status=lent) loan already exists for the
+// same lender, volume, and borrower identity - a linked borrower is matched by user ID, a
+// free-form borrower by name.
+func openLoanExists(c context.Context, lenderUserID, volumeID string, borrowerUserID *string, borrowerName string) (bool, error) <span class="cov9" title="9">{
+        filter := bson.D{
+                {Key: "lender_user_id", Value: lenderUserID},
+                {Key: "volume_id", Value: volumeID},
+                {Key: "status", Value: models.LoanStatusLent},
+        }
+        if borrowerUserID != nil </span><span class="cov3" title="2">{
+                filter = append(filter, bson.E{Key: "borrower_user_id", Value: *borrowerUserID})
+        }</span> else<span class="cov8" title="7"> {
+                filter = append(filter, bson.E{Key: "borrower_name", Value: borrowerName})
+        }</span>
+        <span class="cov9" title="9">results, err := database.Query[models.Loan](loanCollection, live(filter), nil, nil, 0, 1)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while querying database for open loan", "lenderUserID", lenderUserID, "volumeID", volumeID, "error", err)
+                return false, err
+        }</span>
+        <span class="cov9" title="9">return len(results) &gt; 0, nil</span>
+}
+
+// CreateLoan creates a new loan lent by lenderUserID, requiring exactly one of borrowerUserID or
+// borrowerName (the caller resolves borrowerUserID to a display name and passes it as
+// borrowerName regardless of borrower kind, per design.md's always-populated name rule). Rejects
+// the create if an open loan already exists for the same lender, volume, and borrower identity.
+func CreateLoan(c context.Context, lenderUserID, volumeID string, borrowerUserID *string, borrowerName, actingUserID string) (*models.Loan, error) <span class="cov10" title="10">{
+        if borrowerUserID == nil &amp;&amp; borrowerName == "" </span><span class="cov1" title="1">{
+                return nil, ErrLoanBorrowerRequired
+        }</span>
+
+        <span class="cov9" title="9">exists, err := openLoanExists(c, lenderUserID, volumeID, borrowerUserID, borrowerName)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov9" title="9">if exists </span><span class="cov1" title="1">{
+                return nil, ErrLoanAlreadyOpen
+        }</span>
+
+        <span class="cov9" title="8">loan := models.NewLoan(primitive.NewObjectID().Hex(), lenderUserID, volumeID, borrowerUserID, borrowerName)
+        stampCreate(&amp;loan.Auditable, actingUserID, time.Now())
+        if _, err := database.Insert(loanCollection, loan); err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while inserting loan", "lenderUserID", lenderUserID, "volumeID", volumeID, "error", err)
+                return nil, err
+        }</span>
+        <span class="cov9" title="8">return &amp;loan, nil</span>
+}
+
+func replaceLoan(c context.Context, loan *models.Loan, actingUserID string) error <span class="cov5" title="3">{
+        stampUpdate(&amp;loan.Auditable, actingUserID, time.Now())
+        _, err := database.Db.Collection(loanCollection).ReplaceOne(c, live(bson.D{{Key: "_id", Value: loan.ID}, {Key: "lender_user_id", Value: loan.LenderUserID}}), loan)
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while replacing loan", "id", loan.ID, "error", err)
+        }</span>
+        <span class="cov5" title="3">return err</span>
+}
+
+// MarkLoanReturned marks a loan owned (lent) by ownerUserID as returned. A no-op if the loan is
+// already returned. Returns (nil, nil) if the loan doesn't exist or isn't owned by ownerUserID.
+func MarkLoanReturned(c context.Context, id, ownerUserID, actingUserID string) (*models.Loan, error) <span class="cov7" title="5">{
+        loan, err := getOwnedLoan(c, id, ownerUserID)
+        if err != nil || loan == nil </span><span class="cov1" title="1">{
+                return loan, err
+        }</span>
+        <span class="cov6" title="4">if loan.Status == models.LoanStatusReturned </span><span class="cov1" title="1">{
+                return loan, nil
+        }</span>
+        // UTC + millisecond truncation to match what BSON round-trips through Mongo (always UTC,
+        // millisecond precision) and models.NewLoan's own LentAt convention - without both, the
+        // in-memory value returned here never equals a freshly fetched copy of the same document,
+        // which TestMarkLoanReturnedRejectsNonLenderAndIsIdempotent caught comparing the no-op second
+        // return against the first.
+        <span class="cov5" title="3">now := time.Now().UTC().Truncate(time.Millisecond)
+        loan.Status = models.LoanStatusReturned
+        loan.ReturnedAt = &amp;now
+        if err := replaceLoan(c, loan, actingUserID); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov5" title="3">return loan, nil</span>
+}
+
+// DeleteLoan soft-deletes a loan owned (lent) by ownerUserID: it sets deleted_at/deleted_by via
+// $set rather than removing the document. Returns whether a live document was actually marked, so
+// callers can tell "not found" (or already deleted) apart from "found but not owned by
+// ownerUserID".
+func DeleteLoan(c context.Context, id, ownerUserID, actingUserID string) (bool, error) <span class="cov3" title="2">{
+        result, err := database.Db.Collection(loanCollection).UpdateOne(c,
+                live(bson.D{{Key: "_id", Value: id}, {Key: "lender_user_id", Value: ownerUserID}}),
+                softDeleteSet(actingUserID, time.Now()))
+        if err != nil </span><span class="cov0" title="0">{
+                logging.Logger.Error("Error while deleting loan", "id", id, "error", err)
+                return false, err
+        }</span>
+        <span class="cov3" title="2">return result.ModifiedCount &gt; 0, nil</span>
+}
+
+// LoanToVO converts a loan model into its VO.
+func LoanToVO(loan *models.Loan) *vo.LoanVO <span class="cov0" title="0">{
+        return &amp;vo.LoanVO{
+                ID:             loan.ID,
+                LenderUserID:   loan.LenderUserID,
+                VolumeID:       loan.VolumeID,
+                BorrowerUserID: loan.BorrowerUserID,
+                BorrowerName:   loan.BorrowerName,
+                Status:         string(loan.Status),
+                LentAt:         loan.LentAt,
+                ReturnedAt:     loan.ReturnedAt,
+                AuditableVO:    auditVO(loan.Auditable),
+        }
+}</span>
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">package data
+
+import (
+        "context"
 
         "github.com/sweetrpg/common.go/logging"
         "github.com/sweetrpg/mongodb.go/database"
@@ -623,7 +811,7 @@ func MigrateTableVolumeTitles(c context.Context) (int, error) <span class="cov10
 }
 </pre>
 		
-		<pre class="file" id="file6" style="display: none">package data
+		<pre class="file" id="file7" style="display: none">package data
 
 import (
         "context"
@@ -850,7 +1038,7 @@ func TableToVO(tbl *models.Table, viewerID string, isFriend, isFriendOfFriend bo
 }
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">package data
+		<pre class="file" id="file8" style="display: none">package data
 
 import "github.com/sweetrpg/game-room-objects.go/models"
 
@@ -892,7 +1080,7 @@ func PreviewLibraryDefaultChange(lib *models.Library, newDefault models.Visibili
 }
 </pre>
 		
-		<pre class="file" id="file8" style="display: none">package data
+		<pre class="file" id="file9" style="display: none">package data
 
 import (
         "context"
