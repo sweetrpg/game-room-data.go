@@ -8,7 +8,7 @@ require (
 	github.com/sweetrpg/game-room-objects.go v0.3.1
 	github.com/sweetrpg/model-core.go v0.1.0
 	github.com/sweetrpg/mongodb.go v0.0.193
-	go.mongodb.org/mongo-driver v1.17.9
+	go.mongodb.org/mongo-driver v1.17.10
 )
 
 require (
