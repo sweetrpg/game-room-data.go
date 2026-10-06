@@ -139,7 +139,11 @@ func MarkLoanReturned(c context.Context, id, ownerUserID, actingUserID string) (
 	if loan.Status == models.LoanStatusReturned {
 		return loan, nil
 	}
-	now := time.Now()
+	// Truncated to millisecond precision to match what BSON round-trips through Mongo - without
+	// this, the in-memory value returned here (nanosecond precision) never equals a freshly
+	// fetched copy of the same document, which TestMarkLoanReturnedRejectsNonLenderAndIsIdempotent
+	// caught comparing the no-op second return against the first.
+	now := time.Now().Truncate(time.Millisecond)
 	loan.Status = models.LoanStatusReturned
 	loan.ReturnedAt = &now
 	if err := replaceLoan(c, loan, actingUserID); err != nil {
