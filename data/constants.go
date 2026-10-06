@@ -4,6 +4,7 @@ const (
 	libraryCollection  = "libraries"
 	wishlistCollection = "wishlists"
 	tableCollection    = "tables"
+	loanCollection     = "loans"
 )
 
 // DefaultWishlistName is the name assigned to a pre-existing single wishlist document by

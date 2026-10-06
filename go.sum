@@ -12,8 +12,8 @@ github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWD
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/sweetrpg/common.go v0.0.16 h1:XT8PwUXz0BOMIITXLjw3G6rEjjRUEs0Xs4+R9o2fVBk=
 github.com/sweetrpg/common.go v0.0.16/go.mod h1:PVpjDIeB/bZYJZk5fc8whuqVJE8K5k/DsO3o+aZFEcE=
-github.com/sweetrpg/game-room-objects.go v0.3.0 h1:bVjcLdJ1qM7kQ6hd6e/hMluEi8j1x+xJUuwtr/F/MKs=
-github.com/sweetrpg/game-room-objects.go v0.3.0/go.mod h1:az0qPJQp3aYUI6h6AB/qws0sFvmCWdwDrVDj4YcYyXY=
+github.com/sweetrpg/game-room-objects.go v0.3.1 h1:GBV7t/GFT50FfnxL+7HV855kU3aoppXfSkZ4kGzkVZM=
+github.com/sweetrpg/game-room-objects.go v0.3.1/go.mod h1:az0qPJQp3aYUI6h6AB/qws0sFvmCWdwDrVDj4YcYyXY=
 github.com/sweetrpg/model-core.go v0.1.0 h1:ac8kdyj7oLN706JYyUvMB4T0HRkq9gmzObn3YMUTqCo=
 github.com/sweetrpg/model-core.go v0.1.0/go.mod h1:aufDyXjagNyPQADwa6INTv1OI/rIOSjTXtqkzcw1fgA=
 github.com/sweetrpg/mongodb.go v0.0.193 h1:9SvQK3QYftFP1GglMrMvBBlWbIAnSnjQ2Vg13uxQLkQ=
