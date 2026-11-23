@@ -54,6 +54,18 @@ func ListTablesByUser(c context.Context, userID string) ([]*models.Table, error)
 	return results, nil
 }
 
+// ListTablesByVolume returns the owner's live tables that contain volumeID. The filter runs in
+// the query, scoped to ownerUserID.
+func ListTablesByVolume(c context.Context, ownerUserID, volumeID string) ([]*models.Table, error) {
+	results, err := database.Query[models.Table](tableCollection, live(bson.D{
+		{Key: "user_id", Value: ownerUserID}, {Key: "volume_ids", Value: volumeID}}), nil, nil, 0, 0)
+	if err != nil {
+		logging.Logger.Error("Error while querying tables by volume", "ownerUserID", ownerUserID, "volumeID", volumeID, "error", err)
+		return nil, err
+	}
+	return results, nil
+}
+
 // CreateTable creates a new table, defaulting to private visibility per the "new tables default
 // to private" requirement. actingUserID is the caller stamped into the audit fields.
 func CreateTable(c context.Context, userID, name, actingUserID string) (*models.Table, error) {

@@ -130,6 +130,28 @@ func (suite *LoanTestSuite) TestDeleteLoanRejectsNonOwner() {
 	assert.Nil(suite.T(), got)
 }
 
+func (suite *LoanTestSuite) TestFindOpenLoanByVolumeIsLenderScopedAndSkipsReturned() {
+	ctx := context.Background()
+	lender := primitive.NewObjectID().Hex()
+	other := primitive.NewObjectID().Hex()
+	returned, _ := CreateLoan(ctx, lender, "vol-1", nil, "Old", lender)
+	_, err := MarkLoanReturned(ctx, returned.ID, lender, lender)
+	assert.NoError(suite.T(), err)
+
+	none, err := FindOpenLoanByVolume(ctx, lender, "vol-1")
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), none)
+
+	open, _ := CreateLoan(ctx, lender, "vol-1", nil, "Alice", lender)
+	got, err := FindOpenLoanByVolume(ctx, lender, "vol-1")
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), open.ID, got.ID)
+
+	got, err = FindOpenLoanByVolume(ctx, other, "vol-1")
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), got)
+}
+
 func TestLoanTestSuite(t *testing.T) {
 	suite.Run(t, new(LoanTestSuite))
 }
