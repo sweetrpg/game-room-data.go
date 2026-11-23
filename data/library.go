@@ -27,6 +27,26 @@ func GetLibraryByUser(c context.Context, userID string) (*models.Library, error)
 	return results[0], nil
 }
 
+// GetLibraryEntry returns the user's library entry for volumeID, or nil if the volume isn't in
+// the library. The membership filter runs in the query, scoped to userID.
+func GetLibraryEntry(c context.Context, userID, volumeID string) (*models.LibraryEntry, error) {
+	results, err := database.Query[models.Library](libraryCollection, live(bson.D{
+		{Key: "user_id", Value: userID}, {Key: "entries.volume_id", Value: volumeID}}), nil, nil, 0, 1)
+	if err != nil {
+		logging.Logger.Error("Error while querying library entry", "userID", userID, "volumeID", volumeID, "error", err)
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	for i := range results[0].Entries {
+		if results[0].Entries[i].VolumeID == volumeID {
+			return &results[0].Entries[i], nil
+		}
+	}
+	return nil, nil
+}
+
 // getOrCreateLibrary returns the user's library, creating one (defaulting to private) if none
 // exists yet, per the "new library defaults to private" requirement. actingUserID is stamped
 // into the audit fields of a newly created library.

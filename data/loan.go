@@ -42,6 +42,24 @@ func ListLoansBorrowedBy(c context.Context, userID string) ([]*models.Loan, erro
 	return results, nil
 }
 
+// FindOpenLoanByVolume returns the lender's most recent live, still-open (status=lent) loan of
+// volumeID, or nil. Filtered and sorted in the query, scoped to lenderUserID.
+func FindOpenLoanByVolume(c context.Context, lenderUserID, volumeID string) (*models.Loan, error) {
+	results, err := database.Query[models.Loan](loanCollection, live(bson.D{
+		{Key: "lender_user_id", Value: lenderUserID},
+		{Key: "volume_id", Value: volumeID},
+		{Key: "status", Value: models.LoanStatusLent},
+	}), bson.D{{Key: "lent_at", Value: -1}}, nil, 0, 1)
+	if err != nil {
+		logging.Logger.Error("Error while querying open loan by volume", "lenderUserID", lenderUserID, "volumeID", volumeID, "error", err)
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+	return results[0], nil
+}
+
 // getOwnedLoan returns the loan only if it exists, is not soft-deleted, and is owned (lent) by
 // ownerUserID, via a single query filtered on both fields. Returns (nil, nil) both when the loan
 // doesn't exist and when it's owned by someone else - callers needing to tell those apart (to

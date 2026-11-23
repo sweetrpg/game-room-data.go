@@ -2,7 +2,9 @@ package data
 
 import (
 	"context"
+	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -283,6 +285,129 @@ func (suite *WishlistTestSuite) TestUpdateWishlistEntryTitleByVolumeNoReferences
 	got, err := UpdateWishlistEntryTitleByVolume(ctx, "vol-nobody-has", "Whatever")
 	assert.NoError(suite.T(), err)
 	assert.Empty(suite.T(), got)
+}
+
+func (suite *WishlistTestSuite) TestAddWishlistEntryRejectsVolumeOnAnotherWishlist() {
+	ctx := context.Background()
+	u := primitive.NewObjectID().Hex()
+	wl1, _ := CreateWishlist(ctx, u, "First", u)
+	wl2, _ := CreateWishlist(ctx, u, "Second", u)
+
+	_, err := AddWishlistEntry(ctx, wl1.ID, u, "vol-1", "Vol", u)
+	assert.NoError(suite.T(), err)
+	_, err = AddWishlistEntry(ctx, wl2.ID, u, "vol-1", "Vol", u)
+
+	var conflict *WishlistConflictError
+	assert.True(suite.T(), errors.As(err, &conflict))
+	assert.Equal(suite.T(), wl1.ID, conflict.WishlistID)
+	assert.Equal(suite.T(), "First", conflict.WishlistName)
+}
+
+func (suite *WishlistTestSuite) TestAddWishlistEntryAllowedAfterRemoval() {
+	ctx := context.Background()
+	u := primitive.NewObjectID().Hex()
+	wl1, _ := CreateWishlist(ctx, u, "First", u)
+	wl2, _ := CreateWishlist(ctx, u, "Second", u)
+	_, _ = AddWishlistEntry(ctx, wl1.ID, u, "vol-1", "Vol", u)
+	_, err := RemoveWishlistEntry(ctx, wl1.ID, u, "vol-1", u)
+	assert.NoError(suite.T(), err)
+
+	got, err := AddWishlistEntry(ctx, wl2.ID, u, "vol-1", "Vol", u)
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), got.Entries, 1)
+}
+
+func (suite *WishlistTestSuite) TestAddWishlistEntryAllowedAfterWishlistDeleted() {
+	ctx := context.Background()
+	u := primitive.NewObjectID().Hex()
+	wl1, _ := CreateWishlist(ctx, u, "First", u)
+	wl2, _ := CreateWishlist(ctx, u, "Second", u)
+	_, _ = AddWishlistEntry(ctx, wl1.ID, u, "vol-1", "Vol", u)
+	_, err := DeleteWishlist(ctx, wl1.ID, u, u)
+	assert.NoError(suite.T(), err)
+
+	_, err = AddWishlistEntry(ctx, wl2.ID, u, "vol-1", "Vol", u)
+	assert.NoError(suite.T(), err)
+}
+
+func (suite *WishlistTestSuite) TestAddWishlistEntryRejectsPreClaimDuplicate() {
+	ctx := context.Background()
+	u := primitive.NewObjectID().Hex()
+	wl1, _ := CreateWishlist(ctx, u, "Legacy", u)
+	wl2, _ := CreateWishlist(ctx, u, "New", u)
+	// Entry written without a claim, as before the rule existed.
+	wl1.Entries = append(wl1.Entries, models.WishlistEntry{VolumeID: "vol-1", AddedAt: time.Now()})
+	assert.NoError(suite.T(), replaceWishlist(ctx, wl1, u))
+
+	_, err := AddWishlistEntry(ctx, wl2.ID, u, "vol-1", "Vol", u)
+	var conflict *WishlistConflictError
+	assert.True(suite.T(), errors.As(err, &conflict))
+	assert.Equal(suite.T(), wl1.ID, conflict.WishlistID)
+}
+
+func (suite *WishlistTestSuite) TestAddWishlistEntryConcurrentAddsOneWins() {
+	ctx := context.Background()
+	u := primitive.NewObjectID().Hex()
+	wl1, _ := CreateWishlist(ctx, u, "First", u)
+	wl2, _ := CreateWishlist(ctx, u, "Second", u)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, id := range []string{wl1.ID, wl2.ID} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = AddWishlistEntry(ctx, id, u, "vol-1", "Vol", u)
+		}()
+	}
+	wg.Wait()
+
+	failures := 0
+	for _, err := range errs {
+		var conflict *WishlistConflictError
+		if errors.As(err, &conflict) {
+			failures++
+		}
+	}
+	assert.Equal(suite.T(), 1, failures)
+}
+
+func (suite *WishlistTestSuite) TestFindWishlistByVolumeIsOwnerScoped() {
+	ctx := context.Background()
+	u := primitive.NewObjectID().Hex()
+	other := primitive.NewObjectID().Hex()
+	wl, _ := CreateWishlist(ctx, u, "Mine", u)
+	_, _ = AddWishlistEntry(ctx, wl.ID, u, "vol-1", "Vol", u)
+
+	found, err := FindWishlistByVolume(ctx, u, "vol-1")
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), wl.ID, found.ID)
+
+	found, err = FindWishlistByVolume(ctx, other, "vol-1")
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), found)
+}
+
+func (suite *WishlistTestSuite) TestListMultiWishlistVolumesFindsLegacyDuplicates() {
+	ctx := context.Background()
+	u := primitive.NewObjectID().Hex()
+	wl1, _ := CreateWishlist(ctx, u, "A", u)
+	wl2, _ := CreateWishlist(ctx, u, "B", u)
+	for _, wl := range []*models.Wishlist{wl1, wl2} {
+		wl.Entries = append(wl.Entries, models.WishlistEntry{VolumeID: "vol-dup", AddedAt: time.Now()})
+		assert.NoError(suite.T(), replaceWishlist(ctx, wl, u))
+	}
+
+	all, err := ListMultiWishlistVolumes(ctx)
+	assert.NoError(suite.T(), err)
+	var mine []MultiWishlistVolume
+	for _, m := range all {
+		if m.UserID == u {
+			mine = append(mine, m)
+		}
+	}
+	assert.Len(suite.T(), mine, 1)
+	assert.ElementsMatch(suite.T(), []string{wl1.ID, wl2.ID}, mine[0].WishlistIDs)
 }
 
 func TestWishlistTestSuite(t *testing.T) {
