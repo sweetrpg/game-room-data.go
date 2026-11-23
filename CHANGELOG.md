@@ -1,4 +1,11 @@
 
+## 0.8.0 - 2026-11-23
+
+### Added
+- Volume lookups and one-wishlist-per-volume rule
+
+
+
 ## 0.7.0 - 2026-10-06
 
 ### Added
