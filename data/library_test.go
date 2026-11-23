@@ -171,6 +171,26 @@ func (suite *LibraryTestSuite) TestUpdateLibraryEntryTitleByVolumeNoReferences()
 	assert.Empty(suite.T(), got)
 }
 
+func (suite *LibraryTestSuite) TestGetLibraryEntryIsUserScoped() {
+	ctx := context.Background()
+	u := primitive.NewObjectID().Hex()
+	other := primitive.NewObjectID().Hex()
+	_, err := AddLibraryEntry(ctx, u, "vol-1", "Vol", u)
+	assert.NoError(suite.T(), err)
+
+	entry, err := GetLibraryEntry(ctx, u, "vol-1")
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "Vol", entry.VolumeTitle)
+
+	entry, err = GetLibraryEntry(ctx, u, "vol-2")
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), entry)
+
+	entry, err = GetLibraryEntry(ctx, other, "vol-1")
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), entry)
+}
+
 func TestLibraryTestSuite(t *testing.T) {
 	suite.Run(t, new(LibraryTestSuite))
 }

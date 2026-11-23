@@ -5,6 +5,10 @@ const (
 	wishlistCollection = "wishlists"
 	tableCollection    = "tables"
 	loanCollection     = "loans"
+
+	// wishlistClaimCollection holds one document per (user, volume) that is on a wishlist, keyed by
+	// that pair so a duplicate insert is the atomic "already on a wishlist" check.
+	wishlistClaimCollection = "wishlist_volume_claims"
 )
 
 // DefaultWishlistName is the name assigned to a pre-existing single wishlist document by

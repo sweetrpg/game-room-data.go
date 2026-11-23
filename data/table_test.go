@@ -188,6 +188,23 @@ func (suite *TableTestSuite) TestUpdateTableVolumeTitleByVolumeSkipsDottedVolume
 	assert.Empty(suite.T(), got)
 }
 
+func (suite *TableTestSuite) TestListTablesByVolumeIsOwnerScoped() {
+	ctx := context.Background()
+	u := primitive.NewObjectID().Hex()
+	other := primitive.NewObjectID().Hex()
+	with, _ := CreateTable(ctx, u, "With", u)
+	without, _ := CreateTable(ctx, u, "Without", u)
+	theirs, _ := CreateTable(ctx, other, "Theirs", other)
+	_, _ = AddTableVolume(ctx, with.ID, u, "vol-1", "Vol", u)
+	_, _ = AddTableVolume(ctx, theirs.ID, other, "vol-1", "Vol", other)
+	_ = without
+
+	got, err := ListTablesByVolume(ctx, u, "vol-1")
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), got, 1)
+	assert.Equal(suite.T(), with.ID, got[0].ID)
+}
+
 func TestTableTestSuite(t *testing.T) {
 	suite.Run(t, new(TableTestSuite))
 }
